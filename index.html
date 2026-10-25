@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#17132B">
+<title>Rolas</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#17132B; --surface:#221C3D; --surface-2:#2D2650; --text:#EEEAF8;
+  --muted:#9C95B8; --accent:#F2B33D; --accent-ink:#2A1D00; --danger:#FF7A7A;
+  --font:"Bricolage Grotesque", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:16px;line-height:1.4;
+  display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0px)}
+button,input{font:inherit;color:inherit}
+button{cursor:pointer;background:none;border:0}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+header{display:flex;align-items:center;justify-content:space-between;padding:14px 18px 6px}
+h1{font-size:2rem;font-weight:800;margin:0;letter-spacing:-.03em}
+h1 span{display:inline-block;width:.55em;height:.55em;border-radius:50%;background:var(--accent);margin-left:4px;
+  box-shadow:0 0 0 4px var(--bg),0 0 0 6px var(--accent)}
+.icon-btn{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;color:var(--muted)}
+.icon-btn:hover{color:var(--text);background:var(--surface)}
+.icon-btn.on{color:var(--accent)}
+svg{width:22px;height:22px;fill:currentColor}
+nav{display:flex;gap:6px;padding:6px 18px 10px}
+nav button{padding:8px 16px;border-radius:999px;background:var(--surface);color:var(--muted);font-weight:600}
+nav button[aria-selected="true"]{background:var(--text);color:var(--bg)}
+main{flex:1;overflow-y:auto;padding:0 18px 20px}
+.view{display:none;max-width:760px}
+.view.active{display:block}
+.bar{display:flex;gap:8px;margin:6px 0 14px}
+.bar input{flex:1;min-width:0;background:var(--surface);border:1px solid transparent;border-radius:12px;padding:12px 14px}
+.bar input:focus{border-color:var(--accent);outline:none}
+.btn{background:var(--accent);color:var(--accent-ink);font-weight:700;border-radius:12px;padding:0 16px;white-space:nowrap}
+.btn.ghost{background:var(--surface-2);color:var(--text)}
+.hint{color:var(--muted);font-size:.9rem;margin:4px 0 14px}
+.list{list-style:none;margin:0;padding:0}
+.track{display:flex;align-items:center;gap:12px;padding:8px;border-radius:12px}
+.track:hover{background:var(--surface)}
+.track.playing .t-title{color:var(--accent)}
+.track img{width:56px;height:56px;object-fit:cover;border-radius:8px;flex:none;background:var(--surface-2)}
+.t-main{flex:1;min-width:0;text-align:left;padding:0}
+.t-title{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.t-sub{color:var(--muted);font-size:.85rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pl-head{display:flex;align-items:center;gap:10px;margin:18px 0 6px}
+.pl-head h2{font-size:1.25rem;margin:0;flex:1}
+.empty{color:var(--muted);padding:24px 8px}
+/* Reproductor */
+.player{background:var(--surface);border-top:1px solid var(--surface-2);
+  padding:10px 14px calc(10px + env(safe-area-inset-bottom,0px));display:grid;
+  grid-template-columns:auto 1fr;gap:12px;align-items:center}
+.video{width:200px;aspect-ratio:16/9;border-radius:10px;overflow:hidden;background:#000;flex:none}
+.video iframe,.video #yt{width:100%;height:100%;display:block}
+.p-info{min-width:0}
+.p-title{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.p-sub{color:var(--muted);font-size:.85rem;margin-bottom:6px}
+.controls{display:flex;align-items:center;gap:4px}
+.play{width:48px;height:48px;border-radius:50%;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center}
+.play svg{width:26px;height:26px}
+.progress{display:flex;align-items:center;gap:8px;font-size:.75rem;color:var(--muted);margin-top:4px}
+input[type=range]{flex:1;accent-color:var(--accent)}
+@media (max-width:560px){
+  .player{grid-template-columns:1fr}
+  .video{width:100%;max-height:30vh}
+}
+dialog{background:var(--surface);color:var(--text);border:0;border-radius:16px;padding:20px;width:min(92vw,420px)}
+dialog::backdrop{background:rgba(10,8,22,.7)}
+dialog h3{margin:0 0 12px}
+dialog .row{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
+dialog .opts button{display:block;width:100%;text-align:left;padding:10px;border-radius:10px}
+dialog .opts button:hover{background:var(--surface-2)}
+.toast{position:fixed;left:50%;bottom:180px;transform:translateX(-50%);background:var(--text);color:var(--bg);
+  padding:10px 16px;border-radius:999px;font-weight:600;opacity:0;transition:opacity .2s;pointer-events:none}
+.toast.show{opacity:1}
+@media (prefers-reduced-motion:reduce){.toast{transition:none}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Rolas<span></span></h1>
+  <button class="icon-btn" id="btnSettings" aria-label="Ajustes">
+    <svg viewBox="0 0 24 24"><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.4-2.5 1a7.4 7.4 0 0 0-1.7-1L15 3.3h-4L10.7 6a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.4L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.4 2.5-1a7.4 7.4 0 0 0 1.7 1l.3 2.7h4l.3-2.7a7.4 7.4 0 0 0 1.7-1l2.5 1 2-3.4zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z" transform="translate(-1 0)"/></svg>
+  </button>
+</header>
+<nav role="tablist">
+  <button role="tab" data-view="buscar" aria-selected="true">Buscar</button>
+  <button role="tab" data-view="biblioteca" aria-selected="false">Biblioteca</button>
+  <button role="tab" data-view="cola" aria-selected="false">Cola</button>
+</nav>
+
+<main>
+  <section class="view active" id="view-buscar">
+    <div class="bar">
+      <input id="q" placeholder="Busca una canción o pega un link de YouTube" autocomplete="off">
+      <button class="btn" id="btnSearch">Buscar</button>
+    </div>
+    <p class="hint" id="searchHint"></p>
+    <ul class="list" id="results"></ul>
+  </section>
+
+  <section class="view" id="view-biblioteca">
+    <div class="bar">
+      <input id="newPl" placeholder="Nombre de la nueva playlist">
+      <button class="btn" id="btnNewPl">Crear</button>
+    </div>
+    <div id="library"></div>
+  </section>
+
+  <section class="view" id="view-cola">
+    <div class="pl-head"><h2>Siguiente en la cola</h2><button class="btn ghost" id="btnClearQ" style="padding:8px 14px">Vaciar</button></div>
+    <ul class="list" id="queue"></ul>
+  </section>
+</main>
+
+<footer class="player">
+  <div class="video"><div id="yt"></div></div>
+  <div class="p-info">
+    <div class="p-title" id="pTitle">Nada sonando</div>
+    <div class="p-sub" id="pSub">Busca algo para empezar</div>
+    <div class="controls">
+      <button class="icon-btn" id="btnShuffle" aria-label="Aleatorio"><svg viewBox="0 0 24 24"><path d="M14 4h6v6l-2.3-2.3-4.3 4.3-1.4-1.4 4.3-4.3zM4 5.4 5.4 4 20 18.6 18.6 20zM14 20v-2h2.6l-3.2-3.2 1.4-1.4 3.2 3.2V14h2v6z"/></svg></button>
+      <button class="icon-btn" id="btnPrev" aria-label="Anterior"><svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg></button>
+      <button class="play" id="btnPlay" aria-label="Reproducir"><svg viewBox="0 0 24 24" id="playIcon"><path d="M8 5v14l11-7z"/></svg></button>
+      <button class="icon-btn" id="btnNext" aria-label="Siguiente"><svg viewBox="0 0 24 24"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></svg></button>
+      <button class="icon-btn" id="btnRepeat" aria-label="Repetir"><svg viewBox="0 0 24 24"><path d="M7 7h10v3l4-4-4-4v3H5v6h2zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2z"/></svg></button>
+    </div>
+    <div class="progress">
+      <span id="tCur">0:00</span><input type="range" id="seek" min="0" max="100" value="0" step="0.1" aria-label="Posición"><span id="tDur">0:00</span>
+    </div>
+  </div>
+</footer>
+
+<dialog id="dlgSettings">
+  <h3>Ajustes</h3>
+  <div class="row">
+    <label for="apiKey">API key de YouTube Data v3 (para buscar)</label>
+    <input id="apiKey" class="bar" style="background:var(--surface-2);border:0;border-radius:10px;padding:10px">
+    <small class="hint">Sin key puedes agregar canciones pegando su link.</small>
+  </div>
+  <div class="row" style="flex-direction:row;gap:8px">
+    <button class="btn" id="btnSaveKey" style="padding:10px 16px">Guardar</button>
+    <button class="btn ghost" id="btnExport" style="padding:10px 16px">Exportar biblioteca</button>
+    <button class="btn ghost" id="btnImport" style="padding:10px 16px">Importar</button>
+  </div>
+  <input type="file" id="fileImport" accept="application/json" hidden>
+  <button class="btn ghost" onclick="this.closest('dialog').close()" style="padding:10px 16px">Cerrar</button>
+</dialog>
+
+<dialog id="dlgAdd"><h3>Agregar a playlist</h3><div class="opts" id="addOpts"></div>
+  <button class="btn ghost" onclick="this.closest('dialog').close()" style="padding:10px 16px;margin-top:8px">Cancelar</button></dialog>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ---------- Estado ----------
+const $ = s => document.querySelector(s);
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem(k); return v ? JSON.parse(v) : d }catch{ return d } },
+  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)) }catch{} }
+};
+let library = store.get('rolas.library', [{ id:'fav', name:'Me gustan', tracks:[] }]);
+let queue = store.get('rolas.queue', []);
+let index = store.get('rolas.index', -1);
+let shuffle = store.get('rolas.shuffle', false);
+let repeat = store.get('rolas.repeat', 'off'); // off | all | one
+let apiKey = store.get('rolas.key', '');
+let player, ready = false, pendingTrack = null, pendingTrackRef = null;
+
+const save = () => { store.set('rolas.library', library); store.set('rolas.queue', queue);
+  store.set('rolas.index', index); store.set('rolas.shuffle', shuffle); store.set('rolas.repeat', repeat); };
+const thumb = id => `https://i.ytimg.com/vi/${id}/mqdefault.jpg`;
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = s => { s = Math.max(0, Math.floor(s||0)); return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}` };
+function toast(msg){ const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(t._h); t._h = setTimeout(()=>t.classList.remove('show'), 1800) }
+function decode(s){ const d = document.createElement('textarea'); d.innerHTML = s; return d.value }
+
+// ---------- Pestañas ----------
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x => x.setAttribute('aria-selected', x===b));
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-'+b.dataset.view));
+  if (b.dataset.view === 'biblioteca') renderLibrary();
+  if (b.dataset.view === 'cola') renderQueue();
+});
+
+// ---------- YouTube ----------
+const s = document.createElement('script'); s.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(s);
+window.onYouTubeIframeAPIReady = () => {
+  player = new YT.Player('yt', {
+    host: 'https://www.youtube-nocookie.com',
+    playerVars: { playsinline: 1, rel: 0, modestbranding: 1 },
+    events: {
+      onReady: () => { ready = true; if (pendingTrack) { loadTrack(pendingTrack, false) } else if (queue[index]) loadTrack(queue[index], false) },
+      onStateChange: e => {
+        setPlayIcon(e.data === YT.PlayerState.PLAYING);
+        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = e.data === YT.PlayerState.PLAYING ? 'playing' : 'paused';
+        if (e.data === YT.PlayerState.ENDED) next(true);
+      },
+      onError: () => { toast('Ese video no se puede reproducir aquí, saltando'); next(true) }
+    }
+  });
+};
+
+function loadTrack(t, autoplay = true){
+  if (!ready) { pendingTrack = t; return }
+  autoplay ? player.loadVideoById(t.id) : player.cueVideoById(t.id);
+  $('#pTitle').textContent = t.title || 'Sin título';
+  $('#pSub').textContent = t.channel || '';
+  document.title = `${t.title} · Rolas`;
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.metadata = new MediaMetadata({ title: t.title, artist: t.channel || '',
+      artwork: [{ src: `https://i.ytimg.com/vi/${t.id}/hqdefault.jpg`, sizes:'480x360', type:'image/jpeg' }] });
+  }
+  renderQueue(); markPlaying();
+}
+
+function playList(tracks, start = 0){
+  queue = tracks.slice(); index = start;
+  if (shuffle) { const first = queue.splice(start,1)[0]; queue.sort(()=>Math.random()-.5); queue.unshift(first); index = 0 }
+  save(); loadTrack(queue[index]);
+}
+function playNow(t){ queue.splice(index+1, 0, t); index++; save(); loadTrack(t) }
+function enqueue(t){ queue.push(t); if (index < 0) { index = 0; loadTrack(t) } save(); toast('Agregada a la cola'); renderQueue() }
+function next(auto = false){
+  if (!queue.length) return;
+  if (auto && repeat === 'one') { player.seekTo(0); player.playVideo(); return }
+  if (index < queue.length - 1) index++;
+  else if (repeat === 'all' || !auto) index = 0;
+  else return setPlayIcon(false);
+  save(); loadTrack(queue[index]);
+}
+function prev(){
+  if (!queue.length) return;
+  if (ready && player.getCurrentTime() > 4) return player.seekTo(0);
+  index = index > 0 ? index - 1 : queue.length - 1; save(); loadTrack(queue[index]);
+}
+function togglePlay(){
+  if (!ready || index < 0) return;
+  player.getPlayerState() === YT.PlayerState.PLAYING ? player.pauseVideo() : player.playVideo();
+}
+function setPlayIcon(playing){
+  $('#playIcon').innerHTML = playing ? '<path d="M6 5h4v14H6zm8 0h4v14h-4z"/>' : '<path d="M8 5v14l11-7z"/>';
+  $('#btnPlay').setAttribute('aria-label', playing ? 'Pausar' : 'Reproducir');
+}
+$('#btnPlay').onclick = togglePlay; $('#btnNext').onclick = () => next(); $('#btnPrev').onclick = prev;
+$('#btnShuffle').onclick = () => { shuffle = !shuffle; save(); paintModes(); toast(shuffle ? 'Aleatorio activado' : 'Aleatorio desactivado') };
+$('#btnRepeat').onclick = () => { repeat = {off:'all', all:'one', one:'off'}[repeat]; save(); paintModes();
+  toast({off:'Repetir desactivado', all:'Repetir todo', one:'Repetir esta canción'}[repeat]) };
+function paintModes(){ $('#btnShuffle').classList.toggle('on', shuffle); $('#btnRepeat').classList.toggle('on', repeat !== 'off');
+  $('#btnRepeat').style.opacity = repeat === 'one' ? 1 : ''; $('#btnRepeat').title = repeat }
+paintModes();
+
+if ('mediaSession' in navigator) {
+  navigator.mediaSession.setActionHandler('play', () => player?.playVideo());
+  navigator.mediaSession.setActionHandler('pause', () => player?.pauseVideo());
+  navigator.mediaSession.setActionHandler('nexttrack', () => next());
+  navigator.mediaSession.setActionHandler('previoustrack', prev);
+}
+
+// Barra de progreso
+let seeking = false;
+$('#seek').addEventListener('input', () => seeking = true);
+$('#seek').addEventListener('change', e => { if (ready) player.seekTo(player.getDuration() * e.target.value / 100, true); seeking = false });
+setInterval(() => {
+  if (!ready || !player.getDuration) return;
+  const d = player.getDuration(), c = player.getCurrentTime();
+  $('#tCur').textContent = fmt(c); $('#tDur').textContent = fmt(d);
+  if (!seeking && d) $('#seek').value = c / d * 100;
+}, 500);
+
+// Teclado (PC)
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.code === 'Space') { e.preventDefault(); togglePlay() }
+  if (e.code === 'ArrowRight' && e.shiftKey) next();
+  if (e.code === 'ArrowLeft' && e.shiftKey) prev();
+});
+
+// ---------- Búsqueda / links ----------
+function videoIdFrom(text){
+  const m = text.match(/(?:v=|youtu\.be\/|shorts\/|embed\/|live\/)([\w-]{11})/);
+  if (m) return m[1];
+  return /^[\w-]{11}$/.test(text.trim()) ? text.trim() : null;
+}
+function playlistIdFrom(text){ const m = text.match(/[?&]list=([\w-]+)/); return m ? m[1] : null }
+
+async function infoFor(id){
+  try {
+    const r = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent('https://www.youtube.com/watch?v='+id)}&format=json`);
+    if (r.ok) { const j = await r.json(); return { id, title: j.title, channel: j.author_name } }
+  } catch {}
+  return { id, title: 'Video ' + id, channel: 'YouTube' };
+}
+
+async function search(){
+  const q = $('#q').value.trim(); if (!q) return;
+  const listId = playlistIdFrom(q), vid = videoIdFrom(q);
+  if (listId && apiKey) return importPlaylist(listId);
+  if (vid) { renderResults([await infoFor(vid)]); $('#searchHint').textContent = ''; return }
+  if (!apiKey) { $('#searchHint').textContent = 'Para buscar por nombre agrega tu API key en Ajustes. Mientras, pega el link de un video.'; return }
+  $('#searchHint').textContent = 'Buscando…';
+  try {
+    const r = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoCategoryId=10&maxResults=20&q=${encodeURIComponent(q)}&key=${apiKey}`);
+    const j = await r.json();
+    if (j.error) throw new Error(j.error.message);
+    const items = j.items.map(it => ({ id: it.id.videoId, title: decode(it.snippet.title), channel: decode(it.snippet.channelTitle) }));
+    $('#searchHint').textContent = items.length ? '' : 'Sin resultados. Prueba con otro nombre.';
+    renderResults(items);
+  } catch (err) { $('#searchHint').textContent = 'La búsqueda falló: ' + err.message + '. Revisa tu API key en Ajustes.' }
+}
+async function importPlaylist(listId){
+  $('#searchHint').textContent = 'Importando playlist…';
+  try {
+    let tracks = [], page = '', name = 'Playlist importada';
+    const info = await (await fetch(`https://www.googleapis.com/youtube/v3/playlists?part=snippet&id=${listId}&key=${apiKey}`)).json();
+    if (info.items?.[0]) name = decode(info.items[0].snippet.title);
+    do {
+      const j = await (await fetch(`https://www.googleapis.com/youtube/v3/playlistItems?part=snippet&maxResults=50&playlistId=${listId}&key=${apiKey}${page ? '&pageToken='+page : ''}`)).json();
+      if (j.error) throw new Error(j.error.message);
+      tracks.push(...j.items.filter(i => i.snippet.resourceId?.videoId && i.snippet.title !== 'Private video')
+        .map(i => ({ id: i.snippet.resourceId.videoId, title: decode(i.snippet.title), channel: decode(i.snippet.videoOwnerChannelTitle || '') })));
+      page = j.nextPageToken;
+    } while (page && tracks.length < 500);
+    library.push({ id: 'pl' + Date.now(), name, tracks }); save();
+    $('#searchHint').textContent = `Importada “${name}” con ${tracks.length} canciones. Está en tu Biblioteca.`;
+  } catch (err) { $('#searchHint').textContent = 'No se pudo importar: ' + err.message }
+}
+$('#btnSearch').onclick = search;
+$('#q').addEventListener('keydown', e => { if (e.key === 'Enter') search() });
+
+// ---------- Render ----------
+const ICON_PLUS = '<svg viewBox="0 0 24 24"><path d="M11 5h2v14h-2zM5 11h14v2H5z"/></svg>';
+const ICON_QUEUE = '<svg viewBox="0 0 24 24"><path d="M3 6h12v2H3zm0 5h12v2H3zm0 5h8v2H3zm14-2v-3h2v3h3v2h-3v3h-2v-3h-3v-2z"/></svg>';
+const ICON_DEL = '<svg viewBox="0 0 24 24"><path d="M6 7h12l-1 13H7zm3-4h6l1 2h4v2H4V5h4z"/></svg>';
+
+function trackRow(t, opts){
+  const li = document.createElement('li'); li.className = 'track'; li.dataset.id = t.id;
+  li.innerHTML = `<img src="${thumb(t.id)}" alt="" loading="lazy">
+    <button class="t-main"><div class="t-title">${esc(t.title)}</div><div class="t-sub">${esc(t.channel)}</div></button>
+    ${opts.add ? `<button class="icon-btn" data-a="add" aria-label="Agregar a playlist">${ICON_PLUS}</button>` : ''}
+    ${opts.queue ? `<button class="icon-btn" data-a="queue" aria-label="Agregar a la cola">${ICON_QUEUE}</button>` : ''}
+    ${opts.del ? `<button class="icon-btn" data-a="del" aria-label="Quitar">${ICON_DEL}</button>` : ''}`;
+  li.querySelector('.t-main').onclick = opts.onPlay;
+  li.querySelector('[data-a=add]')?.addEventListener('click', () => askPlaylist(t));
+  li.querySelector('[data-a=queue]')?.addEventListener('click', () => enqueue(t));
+  li.querySelector('[data-a=del]')?.addEventListener('click', opts.onDel);
+  return li;
+}
+function renderResults(items){
+  const ul = $('#results'); ul.innerHTML = '';
+  items.forEach(t => ul.appendChild(trackRow(t, { add:true, queue:true, onPlay: () => playNow(t) })));
+  markPlaying();
+}
+function renderLibrary(){
+  const box = $('#library'); box.innerHTML = '';
+  library.forEach(pl => {
+    const head = document.createElement('div'); head.className = 'pl-head';
+    head.innerHTML = `<h2>${esc(pl.name)} <small class="t-sub">· ${pl.tracks.length}</small></h2>
+      <button class="btn" style="padding:8px 14px" ${pl.tracks.length ? '' : 'disabled'}>Reproducir</button>
+      ${pl.id !== 'fav' ? `<button class="icon-btn" aria-label="Borrar playlist">${ICON_DEL}</button>` : ''}`;
+    head.querySelector('.btn').onclick = () => playList(pl.tracks, 0);
+    head.querySelector('.icon-btn')?.addEventListener('click', () => {
+      if (confirm(`¿Borrar la playlist “${pl.name}”?`)) { library = library.filter(p => p !== pl); save(); renderLibrary() }
+    });
+    box.appendChild(head);
+    const ul = document.createElement('ul'); ul.className = 'list';
+    if (!pl.tracks.length) ul.innerHTML = '<li class="empty">Vacía. Agrega canciones desde Buscar con el botón +.</li>';
+    pl.tracks.forEach((t, i) => ul.appendChild(trackRow(t, { queue:true, del:true, onPlay: () => playList(pl.tracks, i),
+      onDel: () => { pl.tracks.splice(i,1); save(); renderLibrary() } })));
+    box.appendChild(ul);
+  });
+  markPlaying();
+}
+function renderQueue(){
+  const ul = $('#queue'); ul.innerHTML = '';
+  if (!queue.length) { ul.innerHTML = '<li class="empty">La cola está vacía. Reproduce una playlist o agrega canciones.</li>'; return }
+  queue.forEach((t, i) => {
+    const li = trackRow(t, { del:true, onPlay: () => { index = i; save(); loadTrack(t) },
+      onDel: () => { queue.splice(i,1); if (i < index) index--; else if (i === index) { index = Math.min(index, queue.length-1); if (queue[index]) loadTrack(queue[index]) } save(); renderQueue() } });
+    if (i === index) li.classList.add('playing');
+    ul.appendChild(li);
+  });
+}
+function markPlaying(){
+  const cur = queue[index]?.id;
+  document.querySelectorAll('#results .track, #library .track').forEach(li => li.classList.toggle('playing', li.dataset.id === cur));
+}
+
+// ---------- Playlists ----------
+function askPlaylist(t){
+  const box = $('#addOpts'); box.innerHTML = '';
+  library.forEach(pl => {
+    const b = document.createElement('button'); b.textContent = pl.name;
+    b.onclick = () => { if (!pl.tracks.some(x => x.id === t.id)) pl.tracks.push(t); save(); $('#dlgAdd').close(); toast(`Agregada a ${pl.name}`) };
+    box.appendChild(b);
+  });
+  $('#dlgAdd').showModal();
+}
+$('#btnNewPl').onclick = () => {
+  const name = $('#newPl').value.trim(); if (!name) return;
+  library.push({ id: 'pl' + Date.now(), name, tracks: [] }); $('#newPl').value = ''; save(); renderLibrary();
+};
+$('#btnClearQ').onclick = () => { queue = queue[index] ? [queue[index]] : []; index = queue.length ? 0 : -1; save(); renderQueue() };
+
+// ---------- Ajustes ----------
+$('#btnSettings').onclick = () => { $('#apiKey').value = apiKey; $('#dlgSettings').showModal() };
+$('#btnSaveKey').onclick = () => { apiKey = $('#apiKey').value.trim(); store.set('rolas.key', apiKey); toast('Guardado'); $('#dlgSettings').close() };
+$('#btnExport').onclick = () => {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(library, null, 1)], { type: 'application/json' }));
+  a.download = 'rolas-biblioteca.json'; a.click();
+};
+$('#btnImport').onclick = () => $('#fileImport').click();
+$('#fileImport').onchange = async e => {
+  try { const data = JSON.parse(await e.target.files[0].text()); if (!Array.isArray(data)) throw 0;
+    library = data; save(); renderLibrary(); toast('Biblioteca importada') } catch { toast('Ese archivo no es una biblioteca de Rolas') }
+};
+
+renderQueue();
+if (queue[index]) { $('#pTitle').textContent = queue[index].title; $('#pSub').textContent = queue[index].channel }
+if (!apiKey) $('#searchHint').textContent = 'Pega el link de un video de YouTube, o agrega tu API key en Ajustes para buscar por nombre.';
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+</script>
+</body>
+</html>

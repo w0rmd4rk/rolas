@@ -1,0 +1,15 @@
+{
+  "name": "Rolas",
+  "short_name": "Rolas",
+  "description": "Tu música de YouTube con playlists, cola y controles tipo Spotify",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#17132B",
+  "theme_color": "#17132B",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
