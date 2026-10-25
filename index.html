@@ -306,7 +306,7 @@ window.addEventListener('resize', placeVideo);
 const s = document.createElement('script'); s.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(s);
 window.onYouTubeIframeAPIReady = () => {
   player = new YT.Player('yt', {
-    host: 'https://www.youtube-nocookie.com',
+    host: 'https://www.youtube.com',
     playerVars: { playsinline: 1, rel: 0, modestbranding: 1, controls: 0, disablekb: 1, iv_load_policy: 3 },
     events: {
       onReady: () => { ready = true; const t = pendingTrack || current(); if (t) loadTrack(t, !!pendingTrack) },
