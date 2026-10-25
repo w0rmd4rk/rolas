@@ -522,10 +522,12 @@ async function enterApp(u){
   if (current()) showTrackInfo(current()); else { $('#mini').hidden = true; placeVideo() }
   $('#searchHint').textContent = apiKey ? '' : 'Pega el link de un video de YouTube, o agrega tu API key en Ajustes para buscar por nombre.';
 }
-function leaveApp(){
+function leaveApp(wipe = false){
   user = null; cloudReady = false; booted = false;
   if (ready) { try { player.stopVideo() } catch {} } keepAlive(false);
-  clearLocal(); closeSheet();
+  // Solo se borran los datos del dispositivo al cerrar sesión a propósito, no al abrir la app sin sesión.
+  if (wipe) clearLocal();
+  closeSheet();
   $('#results').innerHTML = ''; lastResults = [];
   document.body.classList.add('locked'); setAuthMode('login');
 }
@@ -540,7 +542,7 @@ sb.auth.onAuthStateChange((event, session) => {
     }, 300);
   }
   if (session?.user && (!booted || user?.id !== session.user.id)) enterApp(session.user);
-  if (!session && event === 'SIGNED_OUT') leaveApp();
+  if (!session && event === 'SIGNED_OUT') leaveApp(true);
 });
 (async () => {
   const { data } = await sb.auth.getSession();
