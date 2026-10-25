@@ -302,6 +302,21 @@ function placeVideo(){
 }
 window.addEventListener('resize', placeVideo);
 
+// ---------- Control desde la notificación ----------
+// Android muestra los botones del "reproductor" que suena en la página principal. Como YouTube suena dentro
+// de su propio marco, se reproduce en paralelo un audio en silencio de la app para que la notificación use
+// los botones de Rolas (anterior / siguiente) y no los del marco de YouTube.
+function silentWav(){
+  const sr = 8000, n = sr, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+  const str = (o, t) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, sr, true);
+  v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, 'data'); v.setUint32(40, n * 2, true);
+  return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+}
+const keep = new Audio(silentWav()); keep.loop = true;
+function keepAlive(on){ if (on) keep.play().catch(() => {}); else keep.pause() }
+
 // ---------- YouTube ----------
 const s = document.createElement('script'); s.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(s);
 window.onYouTubeIframeAPIReady = () => {
@@ -314,6 +329,8 @@ window.onYouTubeIframeAPIReady = () => {
         // Si YouTube se pausa solo porque saliste de la app (y no fuiste tú), lo reanuda.
         if (e.data === YT.PlayerState.PAUSED && document.hidden && !userPaused) { resumeSoon(); return }
         setPlayIcon(e.data === YT.PlayerState.PLAYING);
+        if (e.data === YT.PlayerState.PLAYING) keepAlive(true);
+        if (e.data === YT.PlayerState.PAUSED && userPaused) keepAlive(false);
         if ('mediaSession' in navigator) navigator.mediaSession.playbackState = e.data === YT.PlayerState.PLAYING ? 'playing' : 'paused';
         if (e.data === YT.PlayerState.ENDED) next(true);
       },
@@ -333,7 +350,7 @@ function loadTrack(t, autoplay = true){
   showTrackInfo(t);
   if (!ready) { pendingTrack = autoplay ? t : null; return }
   pendingTrack = null;
-  if (autoplay) userPaused = false;
+  if (autoplay) { userPaused = false; keepAlive(true) }
   autoplay ? player.loadVideoById(t.id) : player.cueVideoById(t.id);
   document.title = `${t.title} · Rolas`;
   if (autoplay) { recents = [t, ...recents.filter(x => x.id !== t.id)].slice(0, 20); save() }
@@ -357,7 +374,7 @@ function next(auto = false){
   if (auto && repeat === 'one') { player.seekTo(0); player.playVideo(); return }
   if (index < queue.length - 1) index++;
   else if (repeat === 'all' || !auto) index = 0;
-  else return setPlayIcon(false);
+  else { keepAlive(false); return setPlayIcon(false) }
   save(); loadTrack(queue[index]);
 }
 function prev(){
@@ -368,7 +385,8 @@ function prev(){
 function togglePlay(){
   if (!ready || index < 0) return;
   const st = player.getPlayerState();
-  if (st === YT.PlayerState.PLAYING) { userPaused = true; player.pauseVideo() } else { userPaused = false; player.playVideo() }
+  if (st === YT.PlayerState.PLAYING) { userPaused = true; player.pauseVideo(); keepAlive(false) }
+  else { userPaused = false; keepAlive(true); player.playVideo() }
 }
 function resumeSoon(){ [150, 600, 1500].forEach(ms => setTimeout(() => {
   if (ready && !userPaused && player.getPlayerState() !== YT.PlayerState.PLAYING) player.playVideo() }, ms)) }
@@ -394,8 +412,9 @@ function paintModes(){
 paintModes();
 
 if ('mediaSession' in navigator) {
-  navigator.mediaSession.setActionHandler('play', () => { userPaused = false; player?.playVideo() });
-  navigator.mediaSession.setActionHandler('pause', () => { userPaused = true; player?.pauseVideo() });
+  navigator.mediaSession.setActionHandler('play', () => { userPaused = false; keepAlive(true); player?.playVideo() });
+  navigator.mediaSession.setActionHandler('pause', () => { userPaused = true; player?.pauseVideo(); keepAlive(false); navigator.mediaSession.playbackState = 'paused' });
+  try { navigator.mediaSession.setActionHandler('seekto', e => player?.seekTo(e.seekTime, true)) } catch {}
   navigator.mediaSession.setActionHandler('nexttrack', () => next());
   navigator.mediaSession.setActionHandler('previoustrack', prev);
 }
@@ -408,6 +427,9 @@ setInterval(() => {
   const d = player.getDuration(), c = player.getCurrentTime(), pct = d ? c / d * 100 : 0;
   $('#tCur').textContent = fmt(c); $('#tDur').textContent = fmt(d);
   $('#mBar').style.width = pct + '%';
+  if (d && 'mediaSession' in navigator && navigator.mediaSession.setPositionState) {
+    try { navigator.mediaSession.setPositionState({ duration: d, position: Math.min(c, d), playbackRate: 1 }) } catch {}
+  }
   if (!seeking) $('#seek').value = pct;
 }, 500);
 
