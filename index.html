@@ -97,7 +97,11 @@ footer{flex:none;background:linear-gradient(transparent,var(--bg) 28px);padding:
 .sheet-top{display:flex;align-items:center;justify-content:space-between}
 .sheet-top span{font-size:.85rem;font-weight:600}
 .art{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:20px 0}
-.stage{width:100%;max-width:min(100%,52vh);aspect-ratio:1/1;border-radius:8px;background:#000}
+.stage{width:100%;max-width:min(100%,52vh);aspect-ratio:1/1;border-radius:8px;background:#000 center/auto 133.4% no-repeat;
+  box-shadow:0 16px 48px rgba(0,0,0,.45)}
+.switch{display:flex;align-items:center;gap:12px;background:var(--surface-2);border-radius:10px;padding:12px;cursor:pointer}
+.switch input{width:22px;height:22px;accent-color:var(--accent);flex:none}
+.switch small{display:block;color:var(--muted)}
 .now{display:flex;align-items:center;gap:10px;margin-top:8px}
 .now div{flex:1;min-width:0}
 .now-title{font-size:1.4rem;font-weight:800;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -220,6 +224,8 @@ dialog .opts button:hover{background:var(--surface-2)}
     <input id="apiKey" style="background:var(--surface-2);border:0;border-radius:10px;padding:10px">
     <small class="hint">Sin key puedes agregar canciones pegando su link en Buscar.</small>
   </div>
+  <label class="switch row"><input type="checkbox" id="saver">
+    <span><b>Ahorro de datos</b><small>Muestra la portada en lugar del video y reproduce en la calidad más baja. El audio no cambia.</small></span></label>
   <div class="row" style="flex-direction:row;flex-wrap:wrap;gap:8px">
     <button class="btn" id="btnSaveKey">Guardar</button>
     <button class="btn ghost" id="btnExport">Exportar biblioteca</button>
@@ -248,7 +254,8 @@ let recents = store.get('rolas.recents', []);
 let shuffle = store.get('rolas.shuffle', false);
 let repeat = store.get('rolas.repeat', 'off');
 let apiKey = store.get('rolas.key', '');
-let lastResults = [], lastQuery = '', nextPage = '';
+let dataSaver = store.get('rolas.saver', true);
+let lastResults = [], lastQuery = '', nextPage = '', queueSource = '';
 let player, ready = false, pendingTrack = null, userPaused = false;
 
 const save = () => { store.set('rolas.library', library); store.set('rolas.queue', queue); store.set('rolas.index', index);
@@ -291,11 +298,14 @@ window.addEventListener('popstate', () => sheetOpen && closeSheet());
 // Un solo iframe que nunca se mueve en el DOM (moverlo lo recargaría): solo se reacomoda encima del lugar visible.
 function placeVideo(){
   const v = $('#video'), vin = $('#vin');
-  const target = sheetOpen ? $('#stage') : (!$('#mini').hidden ? $('#mslot') : null);
+  const big = sheetOpen && !dataSaver;
+  // En ahorro de datos el video se queda del tamaño de la miniatura: YouTube elige la calidad según el tamaño
+  // del reproductor, así que baja a la mínima (144p). En la pantalla grande se muestra la portada fija.
+  const target = big ? $('#stage') : (!$('#mini').hidden ? $('#mslot') : null);
   if (!target) { v.classList.add('off'); return }
   const r = target.getBoundingClientRect();
   if (!r.width) { v.classList.add('off'); return }
-  v.classList.remove('off'); v.classList.toggle('big', sheetOpen);
+  v.classList.remove('off'); v.classList.toggle('big', big);
   Object.assign(v.style, { left: r.left+'px', top: r.top+'px', width: r.width+'px', height: r.height+'px' });
   // En el mini el cuadro es cuadrado: el video 16:9 se recorta a los lados, como una portada.
   const w = Math.max(r.width, r.height * 16/9), h = w * 9/16;
@@ -345,6 +355,7 @@ function showTrackInfo(t){
   $('#mTitle').textContent = $('#nowTitle').textContent = t.title || 'Sin título';
   $('#mSub').textContent = $('#nowSub').textContent = t.channel || '';
   $('#mslot').style.backgroundImage = `url(${thumb(t.id)})`;
+  $('#stage').style.backgroundImage = `url(https://i.ytimg.com/vi/${t.id}/hqdefault.jpg)`;
   requestAnimationFrame(placeVideo);
 }
 function loadTrack(t, autoplay = true){
@@ -362,8 +373,9 @@ function loadTrack(t, autoplay = true){
   renderQueue(); markPlaying();
 }
 
-function playList(tracks, start = 0){
+function playList(tracks, start = 0, source = ''){
   if (!tracks.length) return;
+  queueSource = source;
   queue = tracks.slice(); index = start;
   if (shuffle) { const first = queue.splice(start,1)[0]; queue.sort(()=>Math.random()-.5); queue.unshift(first); index = 0 }
   save(); loadTrack(queue[index]);
@@ -472,6 +484,10 @@ async function fetchResults(){
       .map(it => ({ id: it.id.videoId, title: decode(it.snippet.title), channel: decode(it.snippet.channelTitle) }));
     nextPage = j.nextPageToken || '';
     renderResults([...lastResults, ...items]);
+    if (queueSource === 'search:' + lastQuery && items.length) {
+      const extra = shuffle ? items.slice().sort(() => Math.random() - .5) : items;
+      queue.push(...extra); save(); renderQueue();
+    }
     $('#searchHint').textContent = lastResults.length ? '' : 'Sin resultados. Prueba con otro nombre.';
     if (nextPage) {
       const b = document.createElement('button'); b.id = 'moreBtn'; b.className = 'btn ghost';
@@ -555,7 +571,8 @@ function renderHome(){
 function renderResults(items){
   lastResults = items;
   const ul = $('#results'); ul.innerHTML = '';
-  items.forEach(t => ul.appendChild(trackRow(t, { add:true, queue:true, onPlay: () => playNow(t) })));
+  items.forEach((t, i) => ul.appendChild(trackRow(t, { add:true, queue:true,
+    onPlay: () => playList(lastResults, i, 'search:' + lastQuery) })));
   markPlaying();
 }
 function renderLibrary(){
@@ -612,7 +629,9 @@ $('#btnNewPl').onclick = () => {
 $('#btnClearQ').onclick = () => { queue = current() ? [current()] : []; index = queue.length ? 0 : -1; save(); renderQueue() };
 
 // ---------- Ajustes ----------
-$('#btnSettings').onclick = () => { $('#apiKey').value = apiKey; $('#dlgSettings').showModal() };
+$('#btnSettings').onclick = () => { $('#apiKey').value = apiKey; $('#saver').checked = dataSaver; $('#dlgSettings').showModal() };
+$('#saver').onchange = e => { dataSaver = e.target.checked; store.set('rolas.saver', dataSaver); placeVideo();
+  toast(dataSaver ? 'Ahorro de datos activado' : 'Ahorro de datos desactivado') };
 $('#btnSaveKey').onclick = () => { apiKey = $('#apiKey').value.trim(); store.set('rolas.key', apiKey); toast('Guardado'); $('#dlgSettings').close() };
 $('#btnExport').onclick = () => {
   const a = document.createElement('a');
