@@ -209,6 +209,27 @@ dialog{max-height:88vh;overflow-y:auto}
 .seg{display:flex;background:var(--surface);border-radius:12px;padding:4px;margin:4px 0 10px}
 .seg button{flex:1;padding:10px;border-radius:9px;font-weight:700;color:var(--muted)}
 .seg button[aria-selected="true"]{background:var(--surface-2);color:var(--text)}
+.crud{display:flex;align-items:center;gap:6px;margin:2px 0 4px}
+.crud span{flex:1;min-width:0;font-weight:700;color:var(--muted);font-size:.85rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.btn.sm{padding:7px 12px;font-size:.85rem}
+.kc{font-size:.78rem;font-weight:700;color:var(--accent);margin-left:4px}
+.kcal-today{font-size:.95rem;margin:2px 0 -4px}
+.kcal-today b{font-size:1.3rem;color:var(--accent)}
+.pcard{background:var(--surface);border-radius:14px;padding:14px;margin-top:10px}
+.card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:6px}
+.card-head small{display:block;color:var(--muted);font-size:.8rem}
+.card-head b{font-size:1.35rem;font-weight:800}
+.delta{font-size:.78rem;font-weight:700;padding:4px 8px;border-radius:6px;background:var(--surface-2);color:var(--muted);white-space:nowrap}
+.delta.down{color:#9BE3A8}.delta.up{color:var(--accent)}
+.chart{width:100%;height:auto;display:block}
+.chart .line{fill:none;stroke:var(--accent);stroke-width:2.5;stroke-linejoin:round;stroke-linecap:round}
+.chart .area{fill:var(--accent);opacity:.12}
+.chart circle{fill:var(--accent)}
+.chart .grid{stroke:var(--surface-2);stroke-dasharray:3 4}
+.chart text{fill:var(--muted);font-size:10px;font-family:var(--font)}
+.chart .bar{fill:var(--accent);opacity:.85}.chart .bar.over{fill:#FF8A8A}
+.chart .goal{stroke:var(--text);stroke-dasharray:4 4;opacity:.6}
+.pick{width:100%;background:var(--surface);border:0;border-radius:10px;padding:12px;font:inherit;color:inherit;margin-top:4px}
 .lastw{margin-top:8px;font-size:.82rem;font-weight:700;color:var(--accent)}
 .add-ex{width:100%;padding:14px}
 .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:14px 0}
@@ -258,9 +279,11 @@ dialog{max-height:88vh;overflow-y:auto}
     <div class="seg" role="tablist" aria-label="Sección del gym">
       <button role="tab" data-tab="ejercicio" aria-selected="true">Ejercicio</button>
       <button role="tab" data-tab="comida" aria-selected="false">Comida</button>
+      <button role="tab" data-tab="progreso" aria-selected="false">Progreso</button>
     </div>
     <div id="rutina"></div>
     <div id="dieta" hidden></div>
+    <div id="progreso" hidden></div>
   </section>
 
   <section class="view" id="view-cola">

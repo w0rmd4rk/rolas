@@ -452,7 +452,7 @@ const shortDate = k => { const [y, m, d] = k.split('-'); return `${+d} ${MESES[+
 function cleanDiet(d){
   return { id: okId(d.id), name: clip(d.name, 60) || 'Protocolo', kcal: clip(d.kcal, 10).replace(/[^\d]/g, '').slice(0, 5),
     month: /^\d{4}-\d{2}$/.test(d.month || '') ? d.month : '',
-    meals: arr(d.meals, 12).filter(m => m && typeof m === 'object').map(m => ({ id: okId(m.id), name: clip(m.name, 40) || 'Comida', text: clip(m.text, 600) })) };
+    meals: arr(d.meals, 12).filter(m => m && typeof m === 'object').map(m => ({ id: okId(m.id), name: clip(m.name, 40) || 'Comida', text: clip(m.text, 600), kcal: num(m.kcal) })) };
 }
 function cleanFitness(f){
   if (!f || typeof f !== 'object') return emptyFitness();
@@ -470,7 +470,7 @@ function cleanFitness(f){
   const rawDiets = Array.isArray(f.diets) ? f.diets : (f.diet && typeof f.diet === 'object' ? [f.diet] : []);
   const diets = arr(rawDiets, 36).filter(d => d && typeof d === 'object').map(cleanDiet);
   const log = {};
-  Object.keys(f.log && typeof f.log === 'object' ? f.log : {}).filter(k => DATE_RE.test(k)).sort().slice(-60).forEach(k => {
+  Object.keys(f.log && typeof f.log === 'object' ? f.log : {}).filter(k => DATE_RE.test(k)).sort().slice(-370).forEach(k => {
     const v = f.log[k] || {};
     log[k] = { ex: arr(v.ex, 400).filter(x => UID_RE.test(x)), meals: arr(v.meals, 20).filter(x => UID_RE.test(x)) };
   });
@@ -481,13 +481,23 @@ function cleanFitness(f){
       .filter(x => x.min !== null || x.max !== null || x.obs);
     if (list.length) records[k] = list;
   });
+  const metrics = arr(f.metrics, 15).filter(m => m && typeof m === 'object').map(m => ({ id: okId(m.id), name: clip(m.name, 30) || 'Medida', unit: clip(m.unit, 10) }));
+  if (!metrics.length) metrics.push(...defaultMetrics());
+  const ids = new Set(metrics.map(m => m.id));
+  const body = arr(f.body, 500).filter(b => b && DATE_RE.test(b.date)).map(b => {
+    const values = {};
+    Object.keys(b.values && typeof b.values === 'object' ? b.values : {}).forEach(k => { const v = num(b.values[k]); if (ids.has(k) && v !== null) values[k] = v });
+    return { id: okId(b.id), date: b.date, values, obs: clip(b.obs, 300) };
+  }).filter(b => Object.keys(b.values).length || b.obs);
   return {
+    metrics, body,
     routines, activeRoutine: routines.some(r => r.id === f.activeRoutine) ? f.activeRoutine : routines[0]?.id || '',
     diets, activeDiet: diets.some(d => d.id === f.activeDiet) ? f.activeDiet : diets[0]?.id || '',
     log, records
   };
 }
-function emptyFitness(){ return { routines: [], activeRoutine: '', diets: [], activeDiet: '', log: {}, records: {} } }
+function defaultMetrics(){ return [{ id: 'peso', name: 'Peso', unit: 'kg' }] }
+function emptyFitness(){ return { metrics: defaultMetrics(), body: [], routines: [], activeRoutine: '', diets: [], activeDiet: '', log: {}, records: {} } }
 
 let fitness = cleanFitness(store.get('rolas.fitness', null));
 let selDay = {};
@@ -565,8 +575,8 @@ function formDialog(title, fields, onSave, onDelete){
 // ----- Pestaña Gym -----
 function renderGym(){
   document.querySelectorAll('.seg button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === gymTab));
-  $('#rutina').hidden = gymTab !== 'ejercicio'; $('#dieta').hidden = gymTab !== 'comida';
-  gymTab === 'ejercicio' ? renderRutina() : renderDieta();
+  $('#rutina').hidden = gymTab !== 'ejercicio'; $('#dieta').hidden = gymTab !== 'comida'; $('#progreso').hidden = gymTab !== 'progreso';
+  ({ ejercicio: renderRutina, comida: renderDieta, progreso: renderProgreso }[gymTab] || renderRutina)();
 }
 document.querySelectorAll('.seg button').forEach(b => b.onclick = () => { gymTab = b.dataset.tab; store.set('rolas.gymTab', gymTab); renderGym() });
 
@@ -584,6 +594,13 @@ function renderRutina(){
   box.appendChild(chips);
 
   const r = activeRoutine();
+  if (r) {
+    const bar = document.createElement('div'); bar.className = 'crud';
+    bar.innerHTML = `<span>${esc(r.name)}</span><button class="btn ghost sm" data-a="ren">Renombrar</button><button class="icon-btn" aria-label="Más opciones de la rutina">${DOTS}</button>`;
+    bar.querySelector('[data-a=ren]').onclick = () => renameRoutine(r);
+    bar.querySelector('.icon-btn').onclick = () => routineMenu(r);
+    box.appendChild(bar);
+  }
   if (!r) {
     box.insertAdjacentHTML('beforeend', `<div class="empty-card"><h2 class="sec" style="margin-top:0">Agrega tu rutina</h2>
       <p>Importa tu plan en archivo o crea una rutina desde cero con los ejercicios de tu entrenador.</p>
@@ -655,14 +672,23 @@ function renderRutina(){
   det.querySelector('[data-a=recs]').onclick = () => formDialog('Recomendaciones', [
       { key:'recs', label:'Una recomendación por línea', type:'textarea', rows:7, value: r.recs.join('\n'), max: 5000 }],
     v => { r.recs = v.recs.split('\n').map(x => clip(x.trim(), 300)).filter(Boolean).slice(0, 20); saveFit(); renderRutina() });
-  det.querySelector('[data-a=opts]').onclick = () => menu(r.name, [
-    ['Cambiar nombre', () => formDialog('Nombre de la rutina', [{ key:'name', label:'Nombre', value:r.name, max:60 }],
-      v => { r.name = v.name || r.name; saveFit(); renderRutina() })],
+  det.querySelector('[data-a=opts]').onclick = () => routineMenu(r);
+  box.appendChild(det);
+}
+function renameRoutine(r){
+  formDialog('Nombre de la rutina', [{ key:'name', label:'Nombre', value:r.name, max:60 }], v => { r.name = v.name || r.name; saveFit(); renderRutina() });
+}
+function routineMenu(r){
+  menu(r.name, [
+    ['Renombrar', () => renameRoutine(r)],
+    ['Duplicar rutina', () => {
+      const c = JSON.parse(JSON.stringify(r)); c.id = uid(); c.name = clip(r.name + ' (copia)', 60);
+      c.days.forEach(d => { d.id = uid(); d.exercises.forEach(e => e.id = uid()) });
+      fitness.routines.push(c); fitness.activeRoutine = c.id; saveFit(); renderRutina(); toast('Rutina duplicada') }],
     ['Exportar plan (respaldo)', exportFit],
     ['Importar plan', () => $('#fileFit').click()],
     ['Eliminar rutina', () => { if (confirm(`¿Eliminar la rutina “${r.name}”?`)) { fitness.routines = fitness.routines.filter(x => x !== r);
       fitness.activeRoutine = fitness.routines[0]?.id || ''; saveFit(); renderRutina() } }, true]]);
-  box.appendChild(det);
 }
 function newRoutine(){
   formDialog('Nueva rutina', [{ key:'name', label:'Nombre', placeholder:'Ej. Rutina 5', max:60 }], v => {
@@ -768,25 +794,34 @@ function renderDieta(){
   }
   const log = todayLog();
   const done = dt.meals.filter(m => log.meals.includes(m.id)).length, total = dt.meals.length;
+  const eaten = dt.meals.filter(m => log.meals.includes(m.id)).reduce((t, m) => t + (m.kcal || 0), 0);
+  const planned = dt.meals.reduce((t, m) => t + (m.kcal || 0), 0);
+  const goal = +dt.kcal || planned;
   const head = document.createElement('div'); head.className = 'diet-head';
   head.innerHTML = `<div><b>${esc(dt.name)}</b>${dt.kcal ? `<span>${esc(dt.kcal)} kcal</span> · ` : ''}<small style="color:var(--muted)">${dt.month ? esc(monthLabel(dt.month)) + ' · ' : ''}${total} comidas</small></div>
     <button class="icon-btn" aria-label="Opciones del protocolo">${DOTS}</button>`;
   head.querySelector('button').onclick = () => menu(dt.name, [
     ['Editar nombre, calorías y mes', () => editDiet(dt)],
+    ['Duplicar protocolo', () => { const c = { ...JSON.parse(JSON.stringify(dt)), id: uid(), name: clip(dt.name + ' (copia)', 60) };
+      c.meals.forEach(m => m.id = uid()); fitness.diets.push(c); fitness.activeDiet = c.id; saveFit(); renderDieta(); toast('Protocolo duplicado') }],
     ['Reiniciar marcas de hoy', () => { log.meals = []; saveFit(); renderDieta() }],
     ['Exportar plan (respaldo)', exportFit],
     ['Importar plan', () => $('#fileFit').click()],
     ['Eliminar protocolo', () => { if (confirm(`¿Eliminar ${dt.name}?`)) { fitness.diets = fitness.diets.filter(x => x !== dt);
       fitness.activeDiet = fitness.diets[0]?.id || ''; saveFit(); renderDieta() } }, true]]);
   box.appendChild(head);
+  const kcalLine = planned ? `<div class="kcal-today"><b>${Math.round(eaten)}</b> de ${Math.round(goal)} kcal consumidas hoy</div>` :
+    `<p class="note">Agrega las calorías de cada comida para ver cuántas llevas en el día.</p>`;
   box.insertAdjacentHTML('beforeend', `<div class="sec-head"><div><h2>Hoy</h2><p>${total ? `${done} de ${total} comidas` : 'Sin comidas todavía'}</p></div></div>
-    <div class="meter"><i style="width:${total ? done / total * 100 : 0}%"></i></div>`);
+    ${kcalLine}
+    <div class="meter"><i style="width:${planned ? Math.min(100, eaten / goal * 100) : (total ? done / total * 100 : 0)}%"></i></div>
+    ${planned && dt.kcal && Math.abs(planned - dt.kcal) > 50 ? `<p class="note">Tus comidas suman ${Math.round(planned)} kcal y la meta del protocolo es ${esc(dt.kcal)} kcal.</p>` : ''}`);
   const ol = document.createElement('ol'); ol.className = 'items';
   dt.meals.forEach(m => {
     const isDone = log.meals.includes(m.id);
     const li = document.createElement('li'); li.className = 'item' + (isDone ? ' done' : '');
     li.innerHTML = `<span class="num" aria-hidden="true"></span>
-      <button class="item-main"><b>${esc(m.name)}</b>${m.text ? `<div class="note" style="color:var(--text);opacity:.85">${esc(m.text)}</div>` : ''}</button>
+      <button class="item-main"><b>${esc(m.name)}${m.kcal ? ` <span class="kc">${m.kcal} kcal</span>` : ''}</b>${m.text ? `<div class="note" style="color:var(--text);opacity:.85">${esc(m.text)}</div>` : ''}</button>
       <button class="check" aria-pressed="${isDone}" aria-label="Marcar ${esc(m.name)} como hecha">${CHECK}</button>`;
     li.querySelector('.check').onclick = () => { toggleIn(log.meals, m.id); saveFit(); renderDieta() };
     li.querySelector('.item-main').onclick = () => editMeal(m);
@@ -810,7 +845,7 @@ function editDiet(dt){
       else {
         const prev = activeDiet();
         const copy = prev && prev.meals.length && confirm(`¿Empezar con las comidas de ${prev.name} para solo cambiar lo necesario?`);
-        const nd = { id: uid(), ...data, meals: copy ? prev.meals.map(m => ({ id: uid(), name: m.name, text: m.text })) : [] };
+        const nd = { id: uid(), ...data, meals: copy ? prev.meals.map(m => ({ id: uid(), name: m.name, text: m.text, kcal: m.kcal })) : [] };
         fitness.diets.push(nd); fitness.activeDiet = nd.id;
       }
       saveFit(); renderDieta();
@@ -820,20 +855,161 @@ function editMeal(m){
   const dt = activeDiet();
   formDialog(m ? 'Editar comida' : 'Nueva comida', [
     { key:'name', label:'Nombre', value: m?.name || 'Comida ' + (dt.meals.length + 1), max:40 },
+    { key:'kcal', label:'Calorías de esta comida', value: m?.kcal ?? '', inputmode:'decimal', placeholder:'Ej. 550', max:6 },
     { key:'text', label:'Qué lleva', type:'textarea', rows:4, value: m?.text, placeholder:'Alimentos y cantidades de tu protocolo', max:600 }],
     v => {
-      const data = { name: v.name || 'Comida', text: v.text };
+      const data = { name: v.name || 'Comida', text: v.text, kcal: num(v.kcal) };
       if (m) Object.assign(m, data); else dt.meals.push({ id: uid(), ...data });
       saveFit(); renderDieta();
     },
     m ? () => { dt.meals = dt.meals.filter(x => x !== m); saveFit(); renderDieta() } : null);
 }
 
+
+// ----- Progreso: medidas corporales y gráficas -----
+function lineChart(points, unit){
+  // points: [{date, y}] ordenados por fecha
+  if (points.length < 2) return `<p class="note">${points.length ? 'Agrega otro registro para ver la gráfica.' : 'Sin registros todavía.'}</p>`;
+  const W = 320, H = 150, L = 36, R = 10, T = 12, B = 24;
+  const ys = points.map(p => p.y), lo = Math.min(...ys), hi = Math.max(...ys), pad = (hi - lo) * 0.15 || 1;
+  const y0 = lo - pad, y1 = hi + pad;
+  const t = points.map(p => new Date(p.date + 'T12:00').getTime()), t0 = t[0], t1 = t[t.length - 1] || t0 + 1;
+  const X = i => L + (t1 === t0 ? 0 : (t[i] - t0) / (t1 - t0)) * (W - L - R);
+  const Y = v => T + (1 - (v - y0) / (y1 - y0)) * (H - T - B);
+  const d = points.map((p, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(p.y).toFixed(1)}`).join('');
+  const area = `${d}L${X(points.length - 1).toFixed(1)},${H - B}L${L},${H - B}Z`;
+  const fmt = v => Math.round(v * 10) / 10;
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Gráfica de ${esc(unit)}">
+    <line x1="${L}" x2="${W - R}" y1="${Y(hi)}" y2="${Y(hi)}" class="grid"/><line x1="${L}" x2="${W - R}" y1="${Y(lo)}" y2="${Y(lo)}" class="grid"/>
+    <text x="${L - 6}" y="${Y(hi) + 4}" text-anchor="end">${fmt(hi)}</text><text x="${L - 6}" y="${Y(lo) + 4}" text-anchor="end">${fmt(lo)}</text>
+    <path d="${area}" class="area"/><path d="${d}" class="line"/>
+    ${points.map((p, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(p.y).toFixed(1)}" r="3"/>`).join('')}
+    <text x="${L}" y="${H - 6}">${shortDate(points[0].date)}</text><text x="${W - R}" y="${H - 6}" text-anchor="end">${shortDate(points[points.length - 1].date)}</text>
+  </svg>`;
+}
+function barChart(items, goal){
+  // items: [{label, y}]
+  const W = 320, H = 150, L = 8, R = 8, T = 14, B = 24, max = Math.max(goal || 0, ...items.map(i => i.y), 1);
+  const bw = (W - L - R) / items.length;
+  const Y = v => T + (1 - v / max) * (H - T - B);
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Gráfica de calorías por día">
+    ${items.map((it, i) => `<rect x="${(L + i * bw + bw * 0.18).toFixed(1)}" y="${Y(it.y).toFixed(1)}" width="${(bw * 0.64).toFixed(1)}" height="${(H - B - Y(it.y)).toFixed(1)}" rx="3" class="${goal && it.y > goal * 1.05 ? 'bar over' : 'bar'}"/>
+      ${i % 2 === items.length % 2 ? '' : `<text x="${(L + i * bw + bw / 2).toFixed(1)}" y="${H - 6}" text-anchor="middle">${esc(it.label)}</text>`}`).join('')}
+    ${goal ? `<line x1="${L}" x2="${W - R}" y1="${Y(goal)}" y2="${Y(goal)}" class="goal"/><text x="${W - R}" y="${Y(goal) - 4}" text-anchor="end">Meta ${Math.round(goal)}</text>` : ''}
+  </svg>`;
+}
+function mealById(id){ for (const d of fitness.diets) { const m = d.meals.find(x => x.id === id); if (m) return [m, d] } return [null, null] }
+function kcalOn(key){ return (fitness.log[key]?.meals || []).reduce((t, id) => t + (mealById(id)[0]?.kcal || 0), 0) }
+let strengthPick = '';
+
+function renderProgreso(){
+  const box = $('#progreso'); box.innerHTML = '';
+  const body = fitness.body.slice().sort((a, b) => a.date.localeCompare(b.date));
+
+  // Medidas
+  box.insertAdjacentHTML('beforeend', `<div class="sec-head"><div><h2>Medidas</h2><p>${body.length ? `${body.length} registros · último ${shortDate(body[body.length - 1].date)}` : 'Registra tu peso y las medidas que te toma tu nutrióloga'}</p></div></div>
+    <div class="actions" style="margin-top:8px"><button class="btn" data-a="addb">+ Registrar medidas</button><button class="btn ghost" data-a="fields">Campos</button></div>`);
+  box.querySelector('[data-a=addb]').onclick = () => editBody(null);
+  box.querySelector('[data-a=fields]').onclick = manageMetrics;
+  fitness.metrics.forEach(m => {
+    const pts = body.filter(b => b.values[m.id] !== undefined).map(b => ({ date: b.date, y: b.values[m.id] }));
+    const last = pts[pts.length - 1], first = pts[0];
+    const diff = last && first && pts.length > 1 ? Math.round((last.y - first.y) * 10) / 10 : null;
+    box.insertAdjacentHTML('beforeend', `<div class="pcard">
+      <div class="card-head"><div><small>${esc(m.name)}</small><b>${last ? `${last.y} ${esc(m.unit)}` : '—'}</b></div>
+      ${diff !== null ? `<span class="delta ${diff < 0 ? 'down' : diff > 0 ? 'up' : ''}">${diff > 0 ? '+' : ''}${diff} ${esc(m.unit)} desde ${shortDate(first.date)}</span>` : ''}</div>
+      ${lineChart(pts, m.unit)}</div>`);
+  });
+
+  // Fuerza
+  const withRec = [];
+  fitness.routines.forEach(r => r.days.forEach(d => d.exercises.forEach(e => { if ((fitness.records[e.id] || []).length) withRec.push({ e, r }) })));
+  box.insertAdjacentHTML('beforeend', `<div class="sec-head"><div><h2>Fuerza</h2><p>Peso máximo por sesión de cada ejercicio</p></div></div>`);
+  if (!withRec.length) box.insertAdjacentHTML('beforeend', '<p class="note">Registra pesos en tus ejercicios (Ejercicio → toca un ejercicio) para ver tu progreso aquí.</p>');
+  else {
+    if (!withRec.some(x => x.e.id === strengthPick)) strengthPick = withRec[0].e.id;
+    const sel = document.createElement('select'); sel.className = 'pick';
+    withRec.forEach(({ e, r }) => { const o = document.createElement('option'); o.value = e.id; o.textContent = `${e.name} · ${r.name}`; if (e.id === strengthPick) o.selected = true; sel.appendChild(o) });
+    sel.onchange = () => { strengthPick = sel.value; renderProgreso() };
+    box.appendChild(sel);
+    const recs = (fitness.records[strengthPick] || []).filter(x => x.max !== null || x.min !== null).slice().sort((a, b) => a.date.localeCompare(b.date));
+    const byDate = {}; recs.forEach(x => { const v = x.max ?? x.min; if (!byDate[x.date] || v > byDate[x.date].y) byDate[x.date] = { date: x.date, y: v, unit: x.unit } });
+    const pts = Object.values(byDate);
+    const unitW = pts[pts.length - 1]?.unit || 'kg';
+    const best = pts.length ? Math.max(...pts.map(p => p.y)) : null;
+    box.insertAdjacentHTML('beforeend', `<div class="pcard"><div class="card-head"><div><small>Récord</small><b>${best !== null ? best + ' ' + esc(unitW) : '—'}</b></div></div>${lineChart(pts, unitW)}</div>`);
+  }
+
+  // Calorías
+  const days = []; const now = new Date();
+  for (let i = 13; i >= 0; i--) { const d = new Date(now); d.setDate(now.getDate() - i);
+    const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    days.push({ label: String(d.getDate()), y: kcalOn(k), key: k }) }
+  const goal = +(activeDiet()?.kcal || 0);
+  const logged = days.filter(d => d.y > 0);
+  const avg = logged.length ? Math.round(logged.reduce((t, d) => t + d.y, 0) / logged.length) : 0;
+  box.insertAdjacentHTML('beforeend', `<div class="sec-head"><div><h2>Calorías</h2><p>Últimos 14 días, según las comidas que marcas</p></div></div>
+    <div class="pcard"><div class="card-head"><div><small>Promedio en días registrados</small><b>${avg ? avg + ' kcal' : '—'}</b></div>${goal ? `<span class="delta">Meta ${goal} kcal</span>` : ''}</div>
+    ${logged.length ? barChart(days, goal) : '<p class="note">Agrega las calorías de cada comida y márcalas al comerlas para ver esta gráfica.</p>'}</div>`);
+
+  // Constancia
+  const weekStart = new Date(now); weekStart.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+  let trained = 0;
+  for (let i = 0; i < 7; i++) { const d = new Date(weekStart); d.setDate(weekStart.getDate() + i);
+    const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    if ((fitness.log[k]?.ex || []).length) trained++ }
+  const planDays = activeRoutine()?.days.length || 0;
+  box.insertAdjacentHTML('beforeend', `<div class="pcard"><div class="card-head"><div><small>Días entrenados esta semana</small><b>${trained}${planDays ? ' de ' + planDays : ''}</b></div></div>
+    <div class="meter" style="margin:4px 0 0"><i style="width:${planDays ? Math.min(100, trained / planDays * 100) : 0}%"></i></div></div>`);
+
+  // Historial de medidas
+  if (body.length) {
+    box.insertAdjacentHTML('beforeend', `<h4 class="hist-title" style="margin-top:24px">Historial de medidas</h4>`);
+    const ul = document.createElement('ul'); ul.className = 'hist';
+    body.slice().reverse().forEach(b => {
+      const li = document.createElement('li');
+      const vals = fitness.metrics.filter(m => b.values[m.id] !== undefined).map(m => `${esc(m.name)}: ${b.values[m.id]} ${esc(m.unit)}`).join(' · ');
+      li.innerHTML = `<div><b>${shortDate(b.date)}</b><small>${vals || 'Sin medidas'}</small>${b.obs ? `<p>${esc(b.obs)}</p>` : ''}</div><button class="icon-btn" aria-label="Opciones del registro">${DOTS}</button>`;
+      li.querySelector('button').onclick = () => menu(shortDate(b.date), [['Editar registro', () => editBody(b)],
+        ['Eliminar registro', () => { fitness.body = fitness.body.filter(x => x !== b); saveFit(); renderProgreso() }, true]]);
+      ul.appendChild(li);
+    });
+    box.appendChild(ul);
+  }
+}
+function editBody(b){
+  const fields = fitness.metrics.map(m => ({ key: 'm_' + m.id, label: `${m.name}${m.unit ? ' (' + m.unit + ')' : ''}`, value: b?.values[m.id] ?? '', inputmode: 'decimal', max: 8, half: true }));
+  fields.push({ key: 'date', label: 'Fecha', type: 'date', value: b?.date || todayKey(), half: true },
+    { key: 'obs', label: 'Observaciones', type: 'textarea', rows: 2, value: b?.obs, placeholder: 'Ej. Medición con la nutrióloga, en ayunas', max: 300 });
+  formDialog(b ? 'Editar medidas' : 'Registrar medidas', fields, v => {
+    const values = {};
+    fitness.metrics.forEach(m => { const n = num(v['m_' + m.id]); if (n !== null) values[m.id] = n });
+    if (!Object.keys(values).length && !v.obs) { toast('Anota al menos una medida'); return false }
+    const data = { date: DATE_RE.test(v.date) ? v.date : todayKey(), values, obs: clip(v.obs, 300) };
+    if (b) Object.assign(b, data); else fitness.body.push({ id: uid(), ...data });
+    saveFit(); renderProgreso(); toast('Medidas guardadas');
+  });
+}
+function manageMetrics(){
+  menu('Campos de medidas', [
+    ...fitness.metrics.map(m => [`${m.name}${m.unit ? ' (' + m.unit + ')' : ''}`, () => formDialog('Editar campo', [
+        { key:'name', label:'Nombre', value:m.name, max:30, half:true }, { key:'unit', label:'Unidad', value:m.unit, max:10, half:true }],
+        v => { m.name = v.name || m.name; m.unit = v.unit; saveFit(); renderProgreso() },
+        fitness.metrics.length > 1 ? () => { if (confirm(`¿Eliminar el campo ${m.name}? Se borran sus valores del historial.`)) {
+          fitness.metrics = fitness.metrics.filter(x => x !== m); fitness.body.forEach(b => delete b.values[m.id]); saveFit(); renderProgreso() } } : null)]),
+    ['+ Agregar campo', () => formDialog('Nuevo campo', [
+        { key:'name', label:'Nombre', placeholder:'Ej. Cintura', max:30, half:true }, { key:'unit', label:'Unidad', placeholder:'Ej. cm', max:10, half:true }],
+        v => { if (!v.name) { toast('Escribe el nombre del campo'); return false }
+          if (fitness.metrics.length >= 15) { toast('Máximo 15 campos'); return false }
+          fitness.metrics.push({ id: uid(), name: v.name, unit: v.unit }); saveFit(); renderProgreso() })]
+  ]);
+}
+
 // ----- Importar / exportar plan -----
 function exportFit(){
   const a = document.createElement('a');
-  const { routines, activeRoutine, diets, activeDiet, records } = fitness;
-  a.href = URL.createObjectURL(new Blob([JSON.stringify({ type: 'rolas-plan', routines, activeRoutine, diets, activeDiet, records }, null, 1)], { type: 'application/json' }));
+  const { routines, activeRoutine, diets, activeDiet, records, metrics, body } = fitness;
+  a.href = URL.createObjectURL(new Blob([JSON.stringify({ type: 'rolas-plan', routines, activeRoutine, diets, activeDiet, records, metrics, body }, null, 1)], { type: 'application/json' }));
   a.download = 'rolas-plan.json'; a.click();
 }
 $('#fileFit').onchange = async e => {
@@ -857,6 +1033,10 @@ $('#fileFit').onchange = async e => {
     if (fitness.diets.some(d => d.id === inc.activeDiet)) fitness.activeDiet = inc.activeDiet;
     if (!fitness.activeDiet) fitness.activeDiet = fitness.diets[0]?.id || '';
     Object.entries(inc.records).forEach(([k, v]) => { if (!fitness.records[k]) fitness.records[k] = v });
+    if (Array.isArray(data.metrics) && data.metrics.length) {
+      inc.metrics.forEach(m => { if (!fitness.metrics.some(x => x.id === m.id)) fitness.metrics.push(m) });
+      const have = new Set(fitness.body.map(b => b.id)); inc.body.forEach(b => { if (!have.has(b.id)) fitness.body.push(b) });
+    }
     saveFit(); toast('Plan importado'); renderGym();
   } catch { toast('Ese archivo no es un plan de Rolas') }
   e.target.value = '';
@@ -884,7 +1064,7 @@ async function pullCloud(){
     if (Array.isArray(data.library) && data.library.length) library = cleanLibrary(data.library);
     recents = cleanTracks(data.recents).slice(0, 20);
     apiKey = /^[\w-]{20,60}$/.test(data.api_key || '') ? data.api_key : '';
-    if (data.fitness && (data.fitness.routines?.length || data.fitness.diets?.length || data.fitness.diet)) fitness = cleanFitness(data.fitness);
+    if (data.fitness && (data.fitness.routines?.length || data.fitness.diets?.length || data.fitness.diet || data.fitness.body?.length)) fitness = cleanFitness(data.fitness);
   }
   store.set('rolas.fitness', fitness);
   store.set('rolas.library', library); store.set('rolas.recents', recents); store.set('rolas.key', apiKey);
