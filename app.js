@@ -604,9 +604,10 @@ function renderRutina(){
   if (!r) {
     box.insertAdjacentHTML('beforeend', `<div class="empty-card"><h2 class="sec" style="margin-top:0">Agrega tu rutina</h2>
       <p>Importa tu plan en archivo o crea una rutina desde cero con los ejercicios de tu entrenador.</p>
-      <div class="actions"><button class="btn" data-a="imp">Importar plan</button><button class="btn ghost" data-a="new">Crear rutina</button></div></div>`);
+      <div class="actions"><button class="btn" data-a="imp">Importar plan</button><button class="btn ghost" data-a="paste">Pegar plan</button><button class="btn ghost" data-a="new">Crear rutina</button></div></div>`);
     box.querySelector('[data-a=imp]').onclick = () => $('#fileFit').click();
     box.querySelector('[data-a=new]').onclick = newRoutine;
+    box.querySelector('[data-a=paste]').onclick = pastePlan;
     return;
   }
   const days = document.createElement('div'); days.className = 'days';
@@ -686,7 +687,8 @@ function routineMenu(r){
       c.days.forEach(d => { d.id = uid(); d.exercises.forEach(e => e.id = uid()) });
       fitness.routines.push(c); fitness.activeRoutine = c.id; saveFit(); renderRutina(); toast('Rutina duplicada') }],
     ['Exportar plan (respaldo)', exportFit],
-    ['Importar plan', () => $('#fileFit').click()],
+    ['Importar plan (archivo)', () => $('#fileFit').click()],
+    ['Pegar plan (texto)', pastePlan],
     ['Eliminar rutina', () => { if (confirm(`¿Eliminar la rutina “${r.name}”?`)) { fitness.routines = fitness.routines.filter(x => x !== r);
       fitness.activeRoutine = fitness.routines[0]?.id || ''; saveFit(); renderRutina() } }, true]]);
 }
@@ -787,9 +789,10 @@ function renderDieta(){
   if (!dt) {
     box.insertAdjacentHTML('beforeend', `<div class="empty-card"><h2 class="sec" style="margin-top:0">Agrega tu protocolo</h2>
       <p>Importa tu plan en archivo o escribe las comidas del protocolo de este mes.</p>
-      <div class="actions"><button class="btn" data-a="imp">Importar plan</button><button class="btn ghost" data-a="new">Crear protocolo</button></div></div>`);
+      <div class="actions"><button class="btn" data-a="imp">Importar plan</button><button class="btn ghost" data-a="paste">Pegar plan</button><button class="btn ghost" data-a="new">Crear protocolo</button></div></div>`);
     box.querySelector('[data-a=imp]').onclick = () => $('#fileFit').click();
     box.querySelector('[data-a=new]').onclick = () => editDiet(null);
+    box.querySelector('[data-a=paste]').onclick = pastePlan;
     return;
   }
   const log = todayLog();
@@ -806,7 +809,8 @@ function renderDieta(){
       c.meals.forEach(m => m.id = uid()); fitness.diets.push(c); fitness.activeDiet = c.id; saveFit(); renderDieta(); toast('Protocolo duplicado') }],
     ['Reiniciar marcas de hoy', () => { log.meals = []; saveFit(); renderDieta() }],
     ['Exportar plan (respaldo)', exportFit],
-    ['Importar plan', () => $('#fileFit').click()],
+    ['Importar plan (archivo)', () => $('#fileFit').click()],
+    ['Pegar plan (texto)', pastePlan],
     ['Eliminar protocolo', () => { if (confirm(`¿Eliminar ${dt.name}?`)) { fitness.diets = fitness.diets.filter(x => x !== dt);
       fitness.activeDiet = fitness.diets[0]?.id || ''; saveFit(); renderDieta() } }, true]]);
   box.appendChild(head);
@@ -1015,8 +1019,17 @@ function exportFit(){
 $('#fileFit').onchange = async e => {
   try {
     const f = e.target.files[0]; if (!f || f.size > 2_000_000) throw 0;
-    const data = JSON.parse(await f.text());
-    if (!data || data.type !== 'rolas-plan') throw 0;
+    importPlan(JSON.parse(await f.text()));
+  } catch { toast('Ese archivo no es un plan de Rolas') }
+  e.target.value = '';
+};
+function pastePlan(){
+  formDialog('Pegar plan', [{ key:'txt', label:'Pega aquí el texto completo del plan (empieza con { y termina con })', type:'textarea', rows:10, max:300000 }], v => {
+    try { importPlan(JSON.parse(v.txt)) } catch { toast('El texto no es un plan válido. Revisa que esté completo.'); return false }
+  });
+}
+function importPlan(data){
+    if (!data || data.type !== 'rolas-plan') throw new Error('formato');
     const inc = cleanFitness(data);
     const dup = inc.routines.filter(r => fitness.routines.some(x => x.name === r.name));
     const replace = dup.length ? confirm(`Ya tienes ${dup.map(r => '“' + r.name + '”').join(', ')}. ¿Reemplazar con la versión del archivo? (Tus registros de peso de esa rutina se conservan solo si el ejercicio sigue existiendo.)`) : false;
@@ -1037,10 +1050,10 @@ $('#fileFit').onchange = async e => {
       inc.metrics.forEach(m => { if (!fitness.metrics.some(x => x.id === m.id)) fitness.metrics.push(m) });
       const have = new Set(fitness.body.map(b => b.id)); inc.body.forEach(b => { if (!have.has(b.id)) fitness.body.push(b) });
     }
-    saveFit(); toast('Plan importado'); renderGym();
-  } catch { toast('Ese archivo no es un plan de Rolas') }
-  e.target.value = '';
-};
+    saveFit(); renderGym();
+    const nd = inc.routines.reduce((t, r) => t + r.days.length, 0), nm = inc.diets.reduce((t, d) => t + d.meals.length, 0);
+    toast(`Importado: ${inc.routines.length} rutina(s) con ${nd} días y ${inc.diets.length} protocolo(s) con ${nm} comidas`);
+}
 
 // ---------- Nube (Supabase) ----------
 let cloudTimer = null, cloudReady = false;
