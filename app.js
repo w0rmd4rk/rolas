@@ -25,7 +25,10 @@ let player, ready = false, pendingTrack = null, userPaused = false;
 const save = () => { scheduleCloud(); store.set('rolas.library', library); store.set('rolas.queue', queue); store.set('rolas.index', index);
   store.set('rolas.recents', recents); store.set('rolas.shuffle', shuffle); store.set('rolas.repeat', repeat) };
 const ID_RE = /^[A-Za-z0-9_-]{11}$/;
-const thumb = id => `https://i.ytimg.com/vi/${ID_RE.test(id) ? id : 'invalid'}/mqdefault.jpg`;
+// Imágenes: con ahorro de datos se piden las versiones más chicas que tiene YouTube (default ≈ 4 KB, mq ≈ 15 KB, hq ≈ 30 KB).
+const img = (id, size) => `https://i.ytimg.com/vi/${ID_RE.test(id) ? id : 'invalid'}/${size}.jpg`;
+const thumb = id => img(id, (typeof dataSaver !== 'undefined' && dataSaver) ? 'default' : 'mqdefault');
+const bigImg = id => img(id, (typeof dataSaver !== 'undefined' && dataSaver) ? 'mqdefault' : 'hqdefault');
 // Todo dato que entra (archivo importado, nube, navegador) pasa por aquí: IDs validados, textos recortados.
 const clip = (v, n) => String(v ?? '').slice(0, n);
 function cleanTrack(t){ return t && ID_RE.test(t.id) ? { id: t.id, title: clip(t.title, 200), channel: clip(t.channel, 120) } : null }
@@ -133,7 +136,7 @@ function showTrackInfo(t){
   $('#mTitle').textContent = $('#nowTitle').textContent = t.title || 'Sin título';
   $('#mSub').textContent = $('#nowSub').textContent = t.channel || '';
   $('#mslot').style.backgroundImage = `url(${thumb(t.id)})`;
-  $('#stage').style.backgroundImage = `url(https://i.ytimg.com/vi/${t.id}/hqdefault.jpg)`;
+  $('#stage').style.backgroundImage = `url(${bigImg(t.id)})`;
   requestAnimationFrame(placeVideo);
 }
 function loadTrack(t, autoplay = true){
@@ -146,7 +149,7 @@ function loadTrack(t, autoplay = true){
   if (autoplay) { recents = [t, ...recents.filter(x => x.id !== t.id)].slice(0, 20); save() }
   if ('mediaSession' in navigator) {
     navigator.mediaSession.metadata = new MediaMetadata({ title: t.title, artist: t.channel || '',
-      artwork: [{ src: `https://i.ytimg.com/vi/${t.id}/hqdefault.jpg`, sizes:'480x360', type:'image/jpeg' }] });
+      artwork: [{ src: bigImg(t.id), sizes: dataSaver ? '320x180' : '480x360', type:'image/jpeg' }] });
   }
   renderQueue(); markPlaying();
 }
@@ -257,7 +260,7 @@ async function search(){
 async function fetchResults(){
   $('#moreBtn')?.remove();
   try {
-    const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoEmbeddable=true&maxResults=50&regionCode=MX&relevanceLanguage=es&q=${encodeURIComponent(lastQuery)}&key=${apiKey}${nextPage ? '&pageToken=' + nextPage : ''}`;
+    const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoEmbeddable=true&maxResults=${dataSaver ? 20 : 50}&regionCode=MX&relevanceLanguage=es&q=${encodeURIComponent(lastQuery)}&key=${apiKey}${nextPage ? '&pageToken=' + nextPage : ''}`;
     const j = await (await fetch(url)).json();
     if (j.error) throw new Error(j.error.message);
     const seen = new Set(lastResults.map(t => t.id));
@@ -342,7 +345,7 @@ function renderHome(){
     const shelf = document.createElement('div'); shelf.className = 'shelf';
     recents.forEach(t => {
       const c = document.createElement('button'); c.className = 'card';
-      c.innerHTML = `<img src="https://i.ytimg.com/vi/${esc(t.id)}/hqdefault.jpg" alt="" loading="lazy"><b>${esc(t.title)}</b><span>${esc(t.channel)}</span>`;
+      c.innerHTML = `<img src="${esc(bigImg(t.id))}" alt="" loading="lazy"><b>${esc(t.title)}</b><span>${esc(t.channel)}</span>`;
       c.onclick = () => playNow(t);
       shelf.appendChild(c);
     });
