@@ -207,7 +207,32 @@ body.locked > header, body.locked > main, body.locked > footer, body.locked .vid
 #fBody .danger{background:none;color:#FF8A8A;font-weight:700;margin-left:auto}
 dialog{max-height:88vh;overflow-y:auto}
 .seg{display:flex;background:var(--surface);border-radius:12px;padding:4px;margin:4px 0 10px}
-.seg button{flex:1;padding:10px;border-radius:9px;font-weight:700;color:var(--muted)}
+.seg button{flex:1;padding:10px 4px;border-radius:9px;font-weight:700;color:var(--muted);font-size:.9rem}
+.item{flex-wrap:wrap}
+.setrow{flex-basis:100%;display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 0 0 40px}
+.setrow small{color:var(--muted);font-size:.8rem}
+.setrow .ok{color:#9BE3A8;font-weight:700;font-size:.9rem}
+.dots{display:flex;gap:5px}.dots i{width:10px;height:10px;border-radius:50%;background:var(--surface-2)}.dots i.on{background:var(--accent)}
+.ses{background:var(--surface);border-radius:14px;padding:12px 14px;margin:8px 0 4px;position:sticky;top:0;z-index:3;box-shadow:0 8px 24px rgba(0,0,0,.35)}
+.ses-row{display:flex;align-items:center;gap:14px}
+.ses-row div{flex:1;min-width:0}.ses-row small{display:block;color:var(--muted);font-size:.75rem}.ses-row b{font-size:1.15rem;font-variant-numeric:tabular-nums}
+.restbox{margin-top:12px;background:var(--surface-2);border-radius:12px;padding:12px;text-align:center}
+.restbox small{display:block;color:var(--muted);font-size:.8rem}
+.restbox b{display:block;font-size:2.6rem;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.1;margin:2px 0 10px;color:var(--accent)}
+.restbox.over b{color:#FF8A8A}.restbox .btn{width:100%}
+.cal-head{display:flex;align-items:center;justify-content:space-between}.cal-head b{text-transform:capitalize}
+.cal-head .icon-btn{font-size:1.6rem;color:var(--text)}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;text-align:center;margin-top:6px}
+.cal-grid small{color:var(--muted);font-size:.72rem;padding-bottom:4px}
+.cal-grid span{position:relative;aspect-ratio:1;display:grid;place-items:center;border-radius:8px;font-size:.85rem;color:var(--muted)}
+.cal-grid span.tr{background:var(--accent);color:var(--accent-ink);font-weight:700}
+.cal-grid span.today{outline:2px solid var(--text);outline-offset:-2px}
+.cal-grid span i{position:absolute;bottom:3px;width:5px;height:5px;border-radius:50%;background:#9BE3A8}
+.cal-legend{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.lg{width:10px;height:10px;border-radius:3px;display:inline-block}.lg.tr{background:var(--accent)}.lg.food{background:#9BE3A8;border-radius:50%;margin-left:8px}
+.chips.wrap{flex-wrap:wrap;overflow:visible}
+.sleep-on{text-align:center}.sleep-on small{color:var(--muted)}.sleep-on b{display:block;font-size:2.4rem;font-weight:800;font-variant-numeric:tabular-nums}
+.sleep-on .actions{justify-content:center}
 .seg button[aria-selected="true"]{background:var(--surface-2);color:var(--text)}
 .crud{display:flex;align-items:center;gap:6px;margin:2px 0 4px}
 .crud span{flex:1;min-width:0;font-weight:700;color:var(--muted);font-size:.85rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -277,12 +302,14 @@ dialog{max-height:88vh;overflow-y:auto}
 
   <section class="view" id="view-gym">
     <div class="seg" role="tablist" aria-label="Sección del gym">
-      <button role="tab" data-tab="ejercicio" aria-selected="true">Ejercicio</button>
+      <button role="tab" data-tab="ejercicio" aria-selected="true">Gym</button>
       <button role="tab" data-tab="comida" aria-selected="false">Comida</button>
+      <button role="tab" data-tab="dormir" aria-selected="false">Dormir</button>
       <button role="tab" data-tab="progreso" aria-selected="false">Progreso</button>
     </div>
     <div id="rutina"></div>
     <div id="dieta" hidden></div>
+    <div id="dormir" hidden></div>
     <div id="progreso" hidden></div>
   </section>
 
@@ -307,7 +334,7 @@ dialog{max-height:88vh;overflow-y:auto}
     <button role="tab" data-view="inicio" aria-selected="true"><svg viewBox="0 0 24 24"><path d="M12 3 3 10v11h6v-6h6v6h6V10z"/></svg>Inicio</button>
     <button role="tab" data-view="buscar" aria-selected="false"><svg viewBox="0 0 24 24"><path d="M10 3a7 7 0 0 1 5.6 11.2l5.1 5.1-1.4 1.4-5.1-5.1A7 7 0 1 1 10 3zm0 2a5 5 0 1 0 0 10 5 5 0 0 0 0-10z"/></svg>Buscar</button>
     <button role="tab" data-view="biblioteca" aria-selected="false"><svg viewBox="0 0 24 24"><path d="M4 3h2v18H4zm5 0h2v18H9zm5.5.6 1.9-.6 5.4 17.2-1.9.6z"/></svg>Biblioteca</button>
-    <button role="tab" data-view="gym" aria-selected="false"><svg viewBox="0 0 24 24"><path d="M2 10h2V8h2v8H4v-2H2zm4-3h3v10H6zm3 4h6v2H9zm6-4h3v10h-3zm3 1h2v2h2v4h-2v2h-2z"/></svg>Gym</button>
+    <button role="tab" data-view="gym" aria-selected="false"><svg viewBox="0 0 24 24"><path d="M12 21.4 10.6 20C5.4 15.4 2 12.3 2 8.5 2 5.4 4.4 3 7.5 3c1.7 0 3.4.8 4.5 2.1C13.1 3.8 14.8 3 16.5 3 19.6 3 22 5.4 22 8.5c0 3.8-3.4 6.9-8.6 11.5z"/></svg>Salud</button>
   </nav>
 </footer>
 
@@ -347,6 +374,8 @@ dialog{max-height:88vh;overflow-y:auto}
   </div>
   <label class="switch row"><input type="checkbox" id="saver">
     <span><b>Ahorro de datos</b><small>Muestra la portada en lugar del video y reproduce en la calidad más baja. El audio no cambia.</small></span></label>
+  <label class="switch row"><input type="checkbox" id="autocont">
+    <span><b>Reproducción continua</b><small>Cuando se acaban las canciones de la búsqueda o la cola, agrega más del mismo artista.</small></span></label>
   <div class="row" style="flex-direction:row;flex-wrap:wrap;gap:8px">
     <button class="btn" id="btnSaveKey">Guardar</button>
     <button class="btn ghost" id="btnExport">Exportar biblioteca</button>

@@ -20,6 +20,9 @@ let repeat = store.get('rolas.repeat', 'off');
 let apiKey = store.get('rolas.key', '');
 let dataSaver = store.get('rolas.saver', true);
 let lastResults = [], lastQuery = '', nextPage = '', queueSource = '';
+// Contexto para seguir llenando la cola cuando se acaba: la búsqueda que la originó y su siguiente página.
+let queueCtx = null, extending = false;
+let autoContinue = store.get('rolas.autocont', true);
 let player, ready = false, pendingTrack = null, userPaused = false;
 
 const save = () => { scheduleCloud(); store.set('rolas.library', library); store.set('rolas.queue', queue); store.set('rolas.index', index);
@@ -53,7 +56,7 @@ function showView(name){
   currentView = name;
   document.querySelectorAll('.tabbar button').forEach(x => x.setAttribute('aria-selected', x.dataset.view === name));
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-'+name));
-  $('#greet').textContent = { inicio: greeting(), buscar: 'Buscar', biblioteca: 'Tu biblioteca', cola: 'Cola', gym: 'Gym' }[name];
+  $('#greet').textContent = { inicio: greeting(), buscar: 'Buscar', biblioteca: 'Tu biblioteca', cola: 'Cola', gym: 'Salud' }[name];
   if (name === 'gym') renderGym();
   if (name === 'inicio') renderHome();
   if (name === 'biblioteca') renderLibrary();
@@ -121,7 +124,7 @@ window.onYouTubeIframeAPIReady = () => {
       onReady: () => { ready = true; const t = pendingTrack || current(); if (t) loadTrack(t, !!pendingTrack) },
       onStateChange: e => {
         setPlayIcon(e.data === YT.PlayerState.PLAYING);
-        if (e.data === YT.PlayerState.PLAYING) keepAlive(true);
+        if (e.data === YT.PlayerState.PLAYING) { keepAlive(true); countPlay() }
         if (e.data === YT.PlayerState.PAUSED) keepAlive(false);
         if ('mediaSession' in navigator) navigator.mediaSession.playbackState = e.data === YT.PlayerState.PLAYING ? 'playing' : 'paused';
         if (e.data === YT.PlayerState.ENDED) next(true);
@@ -152,11 +155,39 @@ function loadTrack(t, autoplay = true){
       artwork: [{ src: bigImg(t.id), sizes: dataSaver ? '320x180' : '480x360', type:'image/jpeg' }] });
   }
   renderQueue(); markPlaying();
+  if (autoplay && index >= queue.length - 2) extendQueue();
+}
+
+// Cuando quedan 2 canciones o menos, trae más: primero la siguiente página de la búsqueda; si ya no hay,
+// y está activada la reproducción continua, busca más canciones del mismo artista.
+async function extendQueue(){
+  if (extending || !apiKey || !queue.length || sleep?.mode === 'end') return;
+  let ctx = queueCtx;
+  if (!ctx?.page) {
+    if (!autoContinue) return;
+    const artist = clip(String(queue[queue.length - 1]?.channel || '').replace(/VEVO$|\s*-\s*Topic$/i, '').trim(), 80);
+    if (!artist) return;
+    ctx = { query: artist, page: '' };
+  }
+  extending = true;
+  try {
+    const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoEmbeddable=true&maxResults=${dataSaver ? 20 : 50}&regionCode=MX&relevanceLanguage=es&q=${encodeURIComponent(ctx.query)}&key=${apiKey}${ctx.page ? '&pageToken=' + ctx.page : ''}`;
+    const j = await (await fetch(url)).json();
+    if (j.error) throw new Error(j.error.message);
+    const have = new Set([...queue, ...recents].map(t => t.id));
+    let items = j.items.filter(it => ID_RE.test(it.id?.videoId) && !have.has(it.id.videoId))
+      .map(it => cleanTrack({ id: it.id.videoId, title: decode(it.snippet.title), channel: decode(it.snippet.channelTitle) }));
+    if (shuffle) items.sort(() => Math.random() - .5);
+    queueCtx = { query: ctx.query, page: j.nextPageToken || '' };
+    if (items.length) { queue.push(...items); save(); renderQueue() }
+  } catch (err) { console.warn('No se pudo continuar la cola:', err.message) }
+  finally { extending = false }
 }
 
 function playList(tracks, start = 0, source = ''){
   if (!tracks.length) return;
   queueSource = source;
+  queueCtx = source.startsWith('search:') ? { query: source.slice(7), page: nextPage } : null;
   queue = tracks.slice(); index = start;
   if (shuffle) { const first = queue.splice(start,1)[0]; queue.sort(()=>Math.random()-.5); queue.unshift(first); index = 0 }
   save(); loadTrack(queue[index]);
@@ -165,6 +196,8 @@ function playNow(t){ queue.splice(index+1, 0, t); index++; save(); loadTrack(t) 
 function enqueue(t){ queue.push(t); if (index < 0) { index = 0; loadTrack(t) } save(); toast('Agregada a la cola'); renderQueue() }
 function next(auto = false){
   if (!queue.length) return;
+  if (!auto) countSkip();
+  if (auto && sleep?.mode === 'end' && index >= queue.length - 1) { stopSleep(true); keepAlive(false); return setPlayIcon(false) }
   if (auto && repeat === 'one') { player.seekTo(0); player.playVideo(); return }
   if (index < queue.length - 1) index++;
   else if (repeat === 'all' || !auto) index = 0;
@@ -268,6 +301,7 @@ async function fetchResults(){
       .map(it => cleanTrack({ id: it.id.videoId, title: decode(it.snippet.title), channel: decode(it.snippet.channelTitle) }));
     nextPage = j.nextPageToken || '';
     renderResults([...lastResults, ...items]);
+    if (queueSource === 'search:' + lastQuery && queueCtx) queueCtx.page = nextPage;
     if (queueSource === 'search:' + lastQuery && items.length) {
       const extra = shuffle ? items.slice().sort(() => Math.random() - .5) : items;
       queue.push(...extra); save(); renderQueue();
@@ -415,7 +449,8 @@ $('#btnClearQ').onclick = () => { queue = current() ? [current()] : []; index = 
 document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => b.closest('dialog').close()));
 
 // ---------- Ajustes ----------
-$('#btnSettings').onclick = () => { $('#accEmail').textContent = user?.email || ''; $('#apiKey').value = apiKey; $('#saver').checked = dataSaver; $('#dlgSettings').showModal() };
+$('#btnSettings').onclick = () => { $('#accEmail').textContent = user?.email || ''; $('#apiKey').value = apiKey; $('#saver').checked = dataSaver; $('#autocont').checked = autoContinue; $('#dlgSettings').showModal() };
+$('#autocont').onchange = e => { autoContinue = e.target.checked; store.set('rolas.autocont', autoContinue) };
 $('#saver').onchange = e => { dataSaver = e.target.checked; store.set('rolas.saver', dataSaver); placeVideo();
   toast(dataSaver ? 'Ahorro de datos activado' : 'Ahorro de datos desactivado') };
 $('#btnSaveKey').onclick = () => { const k = $('#apiKey').value.trim();
@@ -465,6 +500,7 @@ function cleanFitness(f){
       id: okId(d.id), name: clip(d.name, 40) || 'Día', focus: clip(d.focus, 60),
       exercises: arr(d.exercises, 60).filter(e => e && typeof e === 'object').map(e => ({
         id: okId(e.id), name: clip(e.name, 120) || 'Ejercicio', sets: clip(e.sets, 80), reps: clip(e.reps, 140),
+        rest: (n => n !== null && n >= 15 && n <= 900 ? Math.round(n) : null)(num(e.rest)),
         tags: arr(e.tags, 11).filter(t => TAGS.includes(t)), notes: clip(e.notes, 600) }))
     })),
     recs: arr(r.recs, 20).map(x => clip(x, 300)).filter(Boolean)
@@ -496,11 +532,14 @@ function cleanFitness(f){
     metrics, body,
     routines, activeRoutine: routines.some(r => r.id === f.activeRoutine) ? f.activeRoutine : routines[0]?.id || '',
     diets, activeDiet: diets.some(d => d.id === f.activeDiet) ? f.activeDiet : diets[0]?.id || '',
-    log, records
+    log, records,
+    sessions: arr(f.sessions, 300).filter(x => x && DATE_RE.test(x.date)).map(x => ({ id: okId(x.id), date: x.date,
+      rname: clip(x.rname, 60), dname: clip(x.dname, 60), dur: num(x.dur) ?? 0, sets: num(x.sets) ?? 0, total: num(x.total) ?? 0,
+      avgRest: num(x.avgRest), avgTarget: num(x.avgTarget), short: num(x.short) ?? 0, long: num(x.long) ?? 0 }))
   };
 }
 function defaultMetrics(){ return [{ id: 'peso', name: 'Peso', unit: 'kg' }] }
-function emptyFitness(){ return { metrics: defaultMetrics(), body: [], routines: [], activeRoutine: '', diets: [], activeDiet: '', log: {}, records: {} } }
+function emptyFitness(){ return { metrics: defaultMetrics(), body: [], routines: [], activeRoutine: '', diets: [], activeDiet: '', log: {}, records: {}, sessions: [] } }
 
 let fitness = cleanFitness(store.get('rolas.fitness', null));
 let selDay = {};
@@ -578,8 +617,8 @@ function formDialog(title, fields, onSave, onDelete){
 // ----- Pestaña Gym -----
 function renderGym(){
   document.querySelectorAll('.seg button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === gymTab));
-  $('#rutina').hidden = gymTab !== 'ejercicio'; $('#dieta').hidden = gymTab !== 'comida'; $('#progreso').hidden = gymTab !== 'progreso';
-  ({ ejercicio: renderRutina, comida: renderDieta, progreso: renderProgreso }[gymTab] || renderRutina)();
+  ['ejercicio:rutina','comida:dieta','dormir:dormir','progreso:progreso'].forEach(x => { const [t, id] = x.split(':'); $('#' + id).hidden = gymTab !== t });
+  ({ ejercicio: renderRutina, comida: renderDieta, dormir: renderDormir, progreso: renderProgreso }[gymTab] || renderRutina)();
 }
 document.querySelectorAll('.seg button').forEach(b => b.onclick = () => { gymTab = b.dataset.tab; store.set('rolas.gymTab', gymTab); renderGym() });
 
@@ -645,6 +684,7 @@ function renderRutina(){
       ['Eliminar día', () => { if (confirm(`¿Eliminar ${d.name} y sus ejercicios?`)) { r.days = r.days.filter(x => x !== d); saveFit(); renderRutina() } }, true]]);
     box.appendChild(head);
     box.insertAdjacentHTML('beforeend', `<div class="meter"><i style="width:${total ? done / total * 100 : 0}%"></i></div>`);
+    if (total) box.appendChild(sessionPanel(r, d));
 
     const ol = document.createElement('ol'); ol.className = 'items';
     const unit = (v, u) => /^[\d\s\-–]+$/.test(v) ? `${esc(v)} <span>${u}</span>` : esc(v);
@@ -660,6 +700,7 @@ function renderRutina(){
         <button class="check" aria-pressed="${isDone}" aria-label="Marcar ${esc(e.name)} como hecho">${CHECK}</button>`;
       li.querySelector('.check').onclick = () => { toggleIn(log.ex, e.id); saveFit(); renderRutina() };
       li.querySelector('.item-main').onclick = () => openExercise(d, e);
+      if (session && session.did === d.id) li.appendChild(setRow(e));
       ol.appendChild(li);
     });
     box.appendChild(ol);
@@ -706,12 +747,13 @@ function editExercise(day, e){
     { key:'name', label:'Ejercicio', value:e?.name, placeholder:'Ej. Sentadilla búlgara', max:120 },
     { key:'sets', label:'Series', value:e?.sets, placeholder:'Ej. 3  ·  2 de aproximación y 3 efectivas', max:80 },
     { key:'reps', label:'Repeticiones', value:e?.reps, placeholder:'Ej. 6-8  ·  10 + dropset + 10', max:140 },
+    { key:'rest', label:'Descanso entre series', value: e?.rest ? mmss(e.rest) : '', placeholder:'Ej. 2:30 (si lo dejas vacío, 2:30)', max:5 },
     { key:'tags', label:'Variantes', type:'tags', value:e?.tags },
     { key:'notes', label:'Explicación', type:'textarea', rows:3, value:e?.notes, placeholder:'Cómo hacerlo, según tu entrenador', max:600 }],
     v => {
       if (!v.name) { toast('Escribe el nombre del ejercicio'); return false }
       if (!e && day.exercises.length >= 60) { toast('Llegaste al máximo de 60 ejercicios en este día'); return false }
-      const data = { name: v.name, sets: v.sets, reps: v.reps, tags: v.tags.filter(t => TAGS.includes(t)), notes: v.notes };
+      const data = { name: v.name, sets: v.sets, reps: v.reps, rest: parseRest(v.rest), tags: v.tags.filter(t => TAGS.includes(t)), notes: v.notes };
       if (e) Object.assign(e, data); else day.exercises.push({ id: uid(), ...data });
       saveFit(); renderRutina();
       if (!e) toast('Ejercicio agregado');
@@ -911,6 +953,7 @@ let strengthPick = '';
 
 function renderProgreso(){
   const box = $('#progreso'); box.innerHTML = '';
+  box.appendChild(calendar());
   const body = fitness.body.slice().sort((a, b) => a.date.localeCompare(b.date));
 
   // Medidas
@@ -1010,6 +1053,254 @@ function manageMetrics(){
           if (fitness.metrics.length >= 15) { toast('Máximo 15 campos'); return false }
           fitness.metrics.push({ id: uid(), name: v.name, unit: v.unit }); saveFit(); renderProgreso() })]
   ]);
+}
+
+
+// ---------- Sesión de entrenamiento y descansos ----------
+const DEFAULT_REST = 150;
+let session = store.get('rolas.session', null);
+if (session && (typeof session !== 'object' || !UID_RE.test(session.did || '') || !isFinite(session.start))) session = null;
+const mmss = sec => { sec = Math.max(0, Math.round(sec)); const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), x = String(sec % 60).padStart(2, '0'); return h ? `${h}:${String(m).padStart(2, '0')}:${x}` : `${m}:${x}` };
+function parseRest(v){
+  v = String(v || '').trim(); if (!v) return null;
+  const m = v.match(/^(\d{1,2}):(\d{2})$/);
+  const sec = m ? +m[1] * 60 + +m[2] : (/^\d+(\.\d+)?$/.test(v) ? (+v <= 15 ? +v * 60 : +v) : null);
+  return sec && sec >= 15 && sec <= 900 ? Math.round(sec) : null;
+}
+// Cuántas series tiene un ejercicio a partir del texto: "3" → 3, "2 de aproximación y 3 efectivas" → 5, "4 (2 pesadas + 2 ligeras)" → 4
+function setCount(e){
+  const t = String(e.sets || '').replace(/\([^)]*\)/g, ' ');
+  const n = (t.match(/\d+/g) || []).map(Number);
+  if (!n.length) return 3;
+  return Math.max(1, Math.min(20, /\by\b|\+/.test(t) ? n.reduce((a, b) => a + b, 0) : n[0]));
+}
+const saveSession = () => store.set('rolas.session', session);
+const setsOf = id => session?.sets?.[id] || [];
+
+let actx = null;
+function unlockAudio(){ try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume() } catch {} }
+function beep(){
+  if (!actx) return;
+  [0, .28, .56].forEach(t => { try {
+    const o = actx.createOscillator(), g = actx.createGain(); o.frequency.value = 880; o.connect(g); g.connect(actx.destination);
+    const at = actx.currentTime + t; g.gain.setValueAtTime(.0001, at); g.gain.exponentialRampToValueAtTime(.35, at + .02); g.gain.exponentialRampToValueAtTime(.0001, at + .2);
+    o.start(at); o.stop(at + .22) } catch {} });
+}
+function restAlert(){
+  // Baja la música un momento, suena el aviso, vibra y regresa el volumen
+  let vol = null;
+  try { if (ready && player.getPlayerState() === YT.PlayerState.PLAYING && !fading) { vol = player.getVolume(); player.setVolume(Math.round(vol * .2)) } } catch {}
+  beep(); try { navigator.vibrate?.([300, 150, 300, 150, 300]) } catch {}
+  if (vol !== null) setTimeout(() => { try { player.setVolume(vol) } catch {} }, 1800);
+}
+function startSession(r, d, withMusic){
+  unlockAudio();
+  session = { rid: r.id, did: d.id, start: Date.now(), sets: {}, rest: null };
+  saveSession(); renderRutina();
+  if (withMusic) playGymMix();
+}
+function setDone(e){
+  if (!session) return;
+  unlockAudio();
+  if (session.rest) finishRest();
+  const list = session.sets[e.id] = session.sets[e.id] || [];
+  if (list.length >= setCount(e)) return;
+  list.push({ at: Date.now(), rest: null, target: null });
+  session.rest = { exId: e.id, start: Date.now(), target: e.rest || DEFAULT_REST, alerted: false };
+  if (list.length >= setCount(e)) { const log = todayLog(); if (!log.ex.includes(e.id)) { log.ex.push(e.id); saveFit() } }
+  saveSession(); renderRutina();
+}
+function finishRest(){
+  const rs = session?.rest; if (!rs) return;
+  const last = setsOf(rs.exId).slice(-1)[0];
+  if (last) { last.rest = Math.round((Date.now() - rs.start) / 1000); last.target = rs.target }
+  session.rest = null; saveSession();
+}
+function endSession(){
+  if (!session) return;
+  session.rest = null; // el descanso que estaba corriendo al terminar no cuenta
+  const r = fitness.routines.find(x => x.id === session.rid), d = r?.days.find(x => x.id === session.did);
+  const all = Object.values(session.sets).flat(), rests = all.filter(x => x.rest !== null);
+  const total = d ? d.exercises.reduce((t, e) => t + setCount(e), 0) : all.length;
+  const avg = a => a.length ? Math.round(a.reduce((t, x) => t + x, 0) / a.length) : null;
+  const sum = { id: uid(), date: todayKey(), rname: r?.name || '', dname: d ? (d.focus || d.name) : '', dur: Math.round((Date.now() - session.start) / 1000),
+    sets: all.length, total, avgRest: avg(rests.map(x => x.rest)), avgTarget: avg(rests.map(x => x.target)),
+    short: rests.filter(x => x.rest < x.target - 15).length, long: rests.filter(x => x.rest > x.target + 30).length };
+  fitness.sessions = [...fitness.sessions, sum].slice(-300);
+  session = null; saveSession(); saveFit(); renderRutina(); showSummary(sum);
+}
+function showSummary(x){
+  $('#exTitle').textContent = 'Entrenamiento terminado';
+  $('#exBody').innerHTML = `<p class="note" style="margin-top:0">${esc(x.dname)} · ${esc(x.rname)}</p>
+    <div class="stats"><div><small>Duración</small><b>${mmss(x.dur)}</b></div><div><small>Series</small><b>${x.sets} de ${x.total}</b></div>
+    <div><small>Descanso prom.</small><b>${x.avgRest !== null ? mmss(x.avgRest) : '—'}</b></div></div>
+    ${x.avgTarget ? `<p class="note">Tu objetivo de descanso promedio era ${mmss(x.avgTarget)}. ${x.short ? `Descansaste de menos en ${x.short} ${x.short === 1 ? 'serie' : 'series'}. ` : ''}${x.long ? `Te pasaste del descanso en ${x.long} ${x.long === 1 ? 'serie' : 'series'}.` : ''}${!x.short && !x.long ? 'Respetaste muy bien los descansos.' : ''}</p>` : ''}
+    <div class="fbtns"><button class="btn" data-a="ok">Listo</button></div>`;
+  $('#exBody [data-a=ok]').onclick = () => $('#dlgEx').close();
+  $('#dlgEx').showModal();
+}
+function sessionPanel(r, d){
+  const wrap = document.createElement('div');
+  if (!session) {
+    wrap.className = 'actions';
+    wrap.innerHTML = `<button class="btn" data-a="go">Iniciar entrenamiento</button><button class="btn ghost" data-a="music">Entrenar con música</button>`;
+    wrap.querySelector('[data-a=go]').onclick = () => startSession(r, d, false);
+    wrap.querySelector('[data-a=music]').onclick = () => startSession(r, d, true);
+    return wrap;
+  }
+  if (session.did !== d.id) {
+    const od = fitness.routines.flatMap(x => x.days).find(x => x.id === session.did);
+    wrap.className = 'ses';
+    wrap.innerHTML = `<div class="ses-row"><div><small>Entrenamiento en curso</small><b>${esc(od ? (od.focus || od.name) : 'Otro día')}</b></div>
+      <button class="btn ghost sm" data-a="go">Ir</button><button class="btn ghost sm" data-a="end">Terminar</button></div>`;
+    wrap.querySelector('[data-a=go]').onclick = () => { const rr = fitness.routines.find(x => x.days.some(y => y.id === session.did)); if (rr) { fitness.activeRoutine = rr.id; selDay[rr.id] = session.did; renderRutina() } };
+    wrap.querySelector('[data-a=end]').onclick = () => { if (confirm('¿Terminar el entrenamiento en curso?')) endSession() };
+    return wrap;
+  }
+  const total = d.exercises.reduce((t, e) => t + setCount(e), 0), done = d.exercises.reduce((t, e) => t + Math.min(setsOf(e.id).length, setCount(e)), 0);
+  wrap.className = 'ses';
+  wrap.innerHTML = `<div class="ses-row"><div><small>Tiempo</small><b id="sesTotal">${mmss((Date.now() - session.start) / 1000)}</b></div>
+      <div><small>Series</small><b>${done} de ${total}</b></div><button class="btn ghost sm" data-a="end">Terminar</button></div>
+    ${session.rest ? `<div class="restbox" id="restBox"><small id="restLabel">Descanso</small><b id="restClock">0:00</b>
+      <button class="btn" data-a="next">Empezar siguiente serie</button></div>` : ''}`;
+  wrap.querySelector('[data-a=end]').onclick = () => { if (confirm('¿Terminar el entrenamiento?')) endSession() };
+  wrap.querySelector('[data-a=next]')?.addEventListener('click', () => { finishRest(); renderRutina(); toast('¡A darle!') });
+  setTimeout(tickSession, 0);
+  return wrap;
+}
+function setRow(e){
+  const n = setCount(e), done = setsOf(e.id).length;
+  const row = document.createElement('div'); row.className = 'setrow';
+  row.innerHTML = `<span class="dots">${Array.from({ length: n }, (_, i) => `<i class="${i < done ? 'on' : ''}"></i>`).join('')}</span>
+    ${done < n ? `<button class="btn sm">Serie hecha ${done + 1}/${n}</button>` : '<span class="ok">✓ Completo</span>'}
+    <small>Descanso ${mmss(e.rest || DEFAULT_REST)}</small>`;
+  row.querySelector('button')?.addEventListener('click', () => setDone(e));
+  return row;
+}
+function tickSession(){
+  if (!session) return;
+  const t = $('#sesTotal'); if (t) t.textContent = mmss((Date.now() - session.start) / 1000);
+  const rs = session.rest; if (!rs) return;
+  const left = rs.target - (Date.now() - rs.start) / 1000;
+  const c = $('#restClock'), box = $('#restBox');
+  if (c) c.textContent = left >= 0 ? mmss(left) : '+' + mmss(-left);
+  if (box) box.classList.toggle('over', left < 0);
+  const lab = $('#restLabel'); if (lab) lab.textContent = left >= 0 ? 'Descanso' : 'Descanso terminado, te estás pasando';
+  if (left <= 0 && !rs.alerted) { rs.alerted = true; saveSession(); restAlert() }
+}
+setInterval(tickSession, 250);
+
+// ---------- Calendario de constancia ----------
+let calMonth = todayKey().slice(0, 7);
+function calendar(){
+  const box = document.createElement('div'); box.className = 'pcard cal';
+  const [y, m] = calMonth.split('-').map(Number);
+  const first = new Date(y, m - 1, 1), days = new Date(y, m, 0).getDate(), pad = (first.getDay() + 6) % 7;
+  const sessDays = new Set(fitness.sessions.map(x => x.date));
+  let trained = 0, meals = 0, cells = '';
+  for (let i = 0; i < pad; i++) cells += '<span></span>';
+  for (let dd = 1; dd <= days; dd++) {
+    const k = `${y}-${String(m).padStart(2, '0')}-${String(dd).padStart(2, '0')}`, lg = fitness.log[k];
+    const tr = (lg?.ex || []).length > 0 || sessDays.has(k);
+    const mealIds = lg?.meals || [], diet = mealIds.length ? fitness.diets.find(dt => dt.meals.some(x => mealIds.includes(x.id))) : null;
+    const food = diet && diet.meals.every(x => mealIds.includes(x.id));
+    if (tr) trained++; if (food) meals++;
+    cells += `<span class="${tr ? 'tr' : ''} ${k === todayKey() ? 'today' : ''}">${dd}${food ? '<i></i>' : ''}</span>`;
+  }
+  box.innerHTML = `<div class="cal-head"><button class="icon-btn" data-a="prev" aria-label="Mes anterior">‹</button>
+      <b>${esc(monthLabel(calMonth))}</b><button class="icon-btn" data-a="nextm" aria-label="Mes siguiente">›</button></div>
+    <div class="cal-grid"><small>L</small><small>M</small><small>M</small><small>J</small><small>V</small><small>S</small><small>D</small>${cells}</div>
+    <p class="note cal-legend"><span class="lg tr"></span>${trained} días entrenados <span class="lg food"></span>${meals} días con todas tus comidas</p>`;
+  const move = delta => { const d = new Date(y, m - 1 + delta, 1); calMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; renderProgreso() };
+  box.querySelector('[data-a=prev]').onclick = () => move(-1);
+  box.querySelector('[data-a=nextm]').onclick = () => move(1);
+  return box;
+}
+
+// ---------- Estadísticas de escucha y Mix del gym ----------
+let stats = store.get('rolas.stats', {});
+if (!stats || typeof stats !== 'object') stats = {};
+let playing = { id: '', at: 0 };
+function countPlay(){
+  const t = current(); if (!t || playing.id === t.id) return;
+  playing = { id: t.id, at: Date.now() };
+  const st = stats[t.id] = stats[t.id] || { n: 0, s: 0 };
+  st.n++; st.t = cleanTrack(t); st.l = Date.now();
+  const keys = Object.keys(stats); if (keys.length > 600) keys.sort((a, b) => (stats[a].l || 0) - (stats[b].l || 0)).slice(0, keys.length - 600).forEach(k => delete stats[k]);
+  store.set('rolas.stats', stats);
+}
+function countSkip(){
+  const t = current(); if (!t || playing.id !== t.id || Date.now() - playing.at > 30000) return;
+  if (stats[t.id]) { stats[t.id].s++; store.set('rolas.stats', stats) }
+}
+async function playGymMix(){
+  const scored = Object.values(stats).filter(x => x.t && ID_RE.test(x.t.id)).map(x => ({ t: x.t, sc: x.n - 2 * x.s })).filter(x => x.sc > 0).sort((a, b) => b.sc - a.sc);
+  let mix = scored.slice(0, 25).map(x => x.t);
+  const fav = library.find(p => p.id === 'fav')?.tracks || [];
+  fav.forEach(t => { if (!mix.some(x => x.id === t.id)) mix.push(t) });
+  if (apiKey && scored.length) {
+    const count = {}; scored.slice(0, 30).forEach(x => { const a = String(x.t.channel || '').replace(/VEVO$|\s*-\s*Topic$/i, '').trim(); if (a) count[a] = (count[a] || 0) + x.sc });
+    const top = Object.keys(count).sort((a, b) => count[b] - count[a])[0];
+    if (top) try {
+      const j = await (await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoEmbeddable=true&maxResults=15&regionCode=MX&q=${encodeURIComponent(top)}&key=${apiKey}`)).json();
+      (j.items || []).filter(it => ID_RE.test(it.id?.videoId) && !mix.some(x => x.id === it.id.videoId))
+        .forEach(it => mix.push(cleanTrack({ id: it.id.videoId, title: decode(it.snippet.title), channel: decode(it.snippet.channelTitle) })));
+    } catch {}
+  }
+  if (!mix.length) { toast('Escucha y dale + a algunas canciones para armar tu mix'); return }
+  mix.sort(() => Math.random() - .5);
+  const pl = library.find(p => p.id === 'gymmix');
+  if (pl) pl.tracks = mix.slice(0, 60); else library.push({ id: 'gymmix', name: 'Mix del gym', tracks: mix.slice(0, 60) });
+  save(); playList(mix, 0, 'mix'); toast('Sonando tu Mix del gym');
+}
+
+// ---------- Dormir ----------
+let sleep = null, fading = false, sleepPick = 'now', sleepMode = '30';
+function stopSleep(pause){
+  if (!sleep) return;
+  try { if (sleep.vol !== null && ready) player.setVolume(sleep.vol) } catch {}
+  if (pause && ready) { userPaused = true; try { player.pauseVideo() } catch {} }
+  sleep = null; fading = false;
+  if (currentView === 'gym' && gymTab === 'dormir') renderDormir();
+}
+function startSleep(){
+  const pl = library.find(p => p.id === sleepPick);
+  if (pl && pl.tracks.length) playList(pl.tracks, 0, 'sleep');
+  else if (!current()) { toast('Elige una playlist o pon una canción'); return }
+  else if (ready && player.getPlayerState() !== YT.PlayerState.PLAYING) { userPaused = false; player.playVideo() }
+  let vol = null; try { vol = ready ? player.getVolume() : null } catch {}
+  const mins = +sleepMode;
+  sleep = { mode: sleepMode === 'stop' ? 'stop' : sleepMode === 'end' ? 'end' : 'time', end: mins ? Date.now() + mins * 60000 : null, vol };
+  toast(sleep.mode === 'time' ? `Se detendrá en ${mins >= 60 ? mins / 60 + ' h' : mins + ' min'}` : sleep.mode === 'end' ? 'Se detendrá al terminar la playlist' : 'Sonará hasta que lo detengas');
+  renderDormir();
+}
+setInterval(() => {
+  if (!sleep || sleep.mode !== 'time' || !ready) return;
+  const left = (sleep.end - Date.now()) / 1000, FADE = 180;
+  const el = $('#sleepLeft'); if (el) el.textContent = mmss(Math.max(0, left));
+  if (left <= 0) return stopSleep(true);
+  if (left <= FADE && sleep.vol !== null) { fading = true; try { player.setVolume(Math.max(1, Math.round(sleep.vol * left / FADE))) } catch {} }
+}, 1000);
+function renderDormir(){
+  const box = $('#dormir'); box.innerHTML = '';
+  const lists = library.filter(p => p.tracks.length);
+  const opts = [['now', 'Lo que está sonando'], ...lists.map(p => [p.id, p.name])];
+  if (!opts.some(o => o[0] === sleepPick)) sleepPick = 'now';
+  const modes = [['stop', 'Hasta que lo pare'], ['15', '15 min'], ['30', '30 min'], ['60', '1 hora'], ['120', '2 horas'], ['end', 'Al terminar la playlist']];
+  box.innerHTML = `<div class="sec-head"><div><h2>Dormir</h2><p>Música o meditación que se apaga sola, bajando el volumen poco a poco</p></div></div>
+    ${sleep ? `<div class="pcard sleep-on"><small>${sleep.mode === 'time' ? 'Se detiene en' : sleep.mode === 'end' ? 'Se detiene al terminar la playlist' : 'Sonando hasta que lo detengas'}</small>
+      ${sleep.mode === 'time' ? `<b id="sleepLeft">${mmss((sleep.end - Date.now()) / 1000)}</b>` : ''}
+      <div class="actions"><button class="btn ghost" data-a="cancel">Cancelar temporizador</button><button class="btn ghost" data-a="stopnow">Detener ahora</button></div></div>` : ''}
+    <h4 class="hist-title">¿Qué quieres escuchar?</h4><div class="chips wrap" id="sleepLists"></div>
+    <h4 class="hist-title">¿Cuándo se detiene?</h4><div class="chips wrap" id="sleepModes"></div>
+    <div class="actions"><button class="btn add-ex" data-a="start">${sleep ? 'Reiniciar con esta configuración' : 'Empezar'}</button></div>
+    <p class="note">Tip: crea en tu Biblioteca una playlist de meditación o música para dormir y elígela aquí.</p>`;
+  const mk = (host, items, sel, set) => items.forEach(([v, label]) => { const b = document.createElement('button'); b.className = 'chip' + (v === sel ? ' on' : ''); b.textContent = label; b.onclick = () => { set(v); renderDormir() }; $(host).appendChild(b) });
+  mk('#sleepLists', opts, sleepPick, v => sleepPick = v);
+  mk('#sleepModes', modes, sleepMode, v => sleepMode = v);
+  box.querySelector('[data-a=start]').onclick = () => { if (sleep) stopSleep(false); startSleep() };
+  box.querySelector('[data-a=cancel]')?.addEventListener('click', () => { stopSleep(false); toast('Temporizador cancelado') });
+  box.querySelector('[data-a=stopnow]')?.addEventListener('click', () => stopSleep(true));
 }
 
 // ----- Importar / exportar plan -----
