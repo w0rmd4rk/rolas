@@ -50,7 +50,8 @@ function showView(name){
   currentView = name;
   document.querySelectorAll('.tabbar button').forEach(x => x.setAttribute('aria-selected', x.dataset.view === name));
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-'+name));
-  $('#greet').textContent = { inicio: greeting(), buscar: 'Buscar', biblioteca: 'Tu biblioteca', cola: 'Cola' }[name];
+  $('#greet').textContent = { inicio: greeting(), buscar: 'Buscar', biblioteca: 'Tu biblioteca', cola: 'Cola', gym: 'Gym' }[name];
+  if (name === 'gym') renderGym();
   if (name === 'inicio') renderHome();
   if (name === 'biblioteca') renderLibrary();
   if (name === 'cola') renderQueue();
@@ -433,31 +434,466 @@ $('#fileImport').onchange = async e => {
   e.target.value = '';
 };
 
+// ---------- Gym: ejercicio y comida ----------
+const TAGS = ['Aproximación','Efectivas','Pesadas','Ligeras','Dropset','Unilateral','Biserie','Al fallo','Top set','Parciales','Excéntrica'];
+const UNITS = ['kg','lb','placas'];
+const uid = () => Math.random().toString(36).slice(2, 10);
+const UID_RE = /^[a-z0-9]{1,12}$/;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const okId = v => UID_RE.test(v) ? v : uid();
+const todayKey = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` };
+const arr = (a, n) => (Array.isArray(a) ? a : []).slice(0, n);
+const num = v => { const n = parseFloat(String(v ?? '').replace(',', '.')); return isFinite(n) && n >= 0 && n <= 9999 ? Math.round(n * 100) / 100 : null };
+const MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+const monthLabel = m => /^\d{4}-\d{2}$/.test(m || '') ? `${MESES[+m.slice(5) - 1]} ${m.slice(0, 4)}` : '';
+const shortDate = k => { const [y, m, d] = k.split('-'); return `${+d} ${MESES[+m - 1].slice(0, 3)}${y !== String(new Date().getFullYear()) ? ' ' + y : ''}` };
+
+// Limpieza de todo lo que entra (archivo importado, nube, navegador): estructura, tamaños e IDs.
+function cleanDiet(d){
+  return { id: okId(d.id), name: clip(d.name, 60) || 'Protocolo', kcal: clip(d.kcal, 10).replace(/[^\d]/g, '').slice(0, 5),
+    month: /^\d{4}-\d{2}$/.test(d.month || '') ? d.month : '',
+    meals: arr(d.meals, 12).filter(m => m && typeof m === 'object').map(m => ({ id: okId(m.id), name: clip(m.name, 40) || 'Comida', text: clip(m.text, 600) })) };
+}
+function cleanFitness(f){
+  if (!f || typeof f !== 'object') return emptyFitness();
+  const routines = arr(f.routines, 20).filter(r => r && typeof r === 'object').map(r => ({
+    id: okId(r.id), name: clip(r.name, 60) || 'Rutina',
+    days: arr(r.days, 14).filter(d => d && typeof d === 'object').map(d => ({
+      id: okId(d.id), name: clip(d.name, 40) || 'Día', focus: clip(d.focus, 60),
+      exercises: arr(d.exercises, 60).filter(e => e && typeof e === 'object').map(e => ({
+        id: okId(e.id), name: clip(e.name, 120) || 'Ejercicio', sets: clip(e.sets, 80), reps: clip(e.reps, 140),
+        tags: arr(e.tags, 11).filter(t => TAGS.includes(t)), notes: clip(e.notes, 600) }))
+    })),
+    recs: arr(r.recs, 20).map(x => clip(x, 300)).filter(Boolean)
+  }));
+  // "diet" (versión anterior, una sola dieta) se convierte en la lista "diets"
+  const rawDiets = Array.isArray(f.diets) ? f.diets : (f.diet && typeof f.diet === 'object' ? [f.diet] : []);
+  const diets = arr(rawDiets, 36).filter(d => d && typeof d === 'object').map(cleanDiet);
+  const log = {};
+  Object.keys(f.log && typeof f.log === 'object' ? f.log : {}).filter(k => DATE_RE.test(k)).sort().slice(-60).forEach(k => {
+    const v = f.log[k] || {};
+    log[k] = { ex: arr(v.ex, 400).filter(x => UID_RE.test(x)), meals: arr(v.meals, 20).filter(x => UID_RE.test(x)) };
+  });
+  const records = {};
+  Object.keys(f.records && typeof f.records === 'object' ? f.records : {}).filter(k => UID_RE.test(k)).slice(0, 600).forEach(k => {
+    const list = arr(f.records[k], 300).filter(x => x && DATE_RE.test(x.date)).map(x => ({
+      id: okId(x.id), date: x.date, min: num(x.min), max: num(x.max), unit: UNITS.includes(x.unit) ? x.unit : 'kg', obs: clip(x.obs, 300) }))
+      .filter(x => x.min !== null || x.max !== null || x.obs);
+    if (list.length) records[k] = list;
+  });
+  return {
+    routines, activeRoutine: routines.some(r => r.id === f.activeRoutine) ? f.activeRoutine : routines[0]?.id || '',
+    diets, activeDiet: diets.some(d => d.id === f.activeDiet) ? f.activeDiet : diets[0]?.id || '',
+    log, records
+  };
+}
+function emptyFitness(){ return { routines: [], activeRoutine: '', diets: [], activeDiet: '', log: {}, records: {} } }
+
+let fitness = cleanFitness(store.get('rolas.fitness', null));
+let selDay = {};
+let gymTab = store.get('rolas.gymTab', 'ejercicio');
+function saveFit(){ store.set('rolas.fitness', fitness); scheduleCloud() }
+const activeRoutine = () => fitness.routines.find(r => r.id === fitness.activeRoutine);
+const activeDiet = () => fitness.diets.find(d => d.id === fitness.activeDiet);
+function todayLog(){ const k = todayKey(); return fitness.log[k] || (fitness.log[k] = { ex: [], meals: [] }) }
+function toggleIn(list, id){ const i = list.indexOf(id); i < 0 ? list.push(id) : list.splice(i, 1) }
+const recsOf = id => (fitness.records[id] || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+const fmtW = r => r.min !== null && r.max !== null && r.min !== r.max ? `${r.min}–${r.max} ${r.unit}` : `${r.max ?? r.min ?? ''} ${r.unit}`;
+const CHECK = '<svg viewBox="0 0 24 24"><path d="m9 16.2-3.5-3.5L4 14.2l5 5 11-11-1.5-1.4z"/></svg>';
+const DOTS = '<svg viewBox="0 0 24 24"><path d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm0 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>';
+
+// Menú de opciones reutilizable
+function menu(title, options){
+  $('#mnTitle').textContent = title;
+  const box = $('#mnOpts'); box.innerHTML = '';
+  options.forEach(([label, fn, danger]) => {
+    const b = document.createElement('button'); b.textContent = label; if (danger) b.style.color = '#FF8A8A';
+    b.onclick = () => { $('#dlgMenu').close(); fn() }; box.appendChild(b);
+  });
+  $('#dlgMenu').showModal();
+}
+// Formulario reutilizable
+function formDialog(title, fields, onSave, onDelete){
+  $('#fTitle').textContent = title;
+  const f = $('#fBody'); f.innerHTML = '';
+  const picked = {};
+  let row = null;
+  fields.forEach(fd => {
+    const id = 'f_' + fd.key;
+    let host = f;
+    if (fd.half) { if (!row || row.children.length >= 2) { row = document.createElement('div'); row.className = 'frow'; f.appendChild(row) } host = document.createElement('div'); row.appendChild(host) } else row = null;
+    const lab = document.createElement('label'); lab.textContent = fd.label; lab.htmlFor = id; host.appendChild(lab);
+    if (fd.type === 'tags') {
+      picked[fd.key] = new Set(fd.value || []);
+      const wrap = document.createElement('div'); wrap.className = 'tagpick'; wrap.id = id;
+      TAGS.forEach(t => {
+        const b = document.createElement('button'); b.type = 'button'; b.textContent = t;
+        b.setAttribute('aria-pressed', picked[fd.key].has(t));
+        b.onclick = () => { picked[fd.key].has(t) ? picked[fd.key].delete(t) : picked[fd.key].add(t); b.setAttribute('aria-pressed', picked[fd.key].has(t)) };
+        wrap.appendChild(b);
+      });
+      host.appendChild(wrap);
+    } else if (fd.type === 'select') {
+      const el = document.createElement('select'); el.id = id;
+      fd.options.forEach(o => { const op = document.createElement('option'); op.value = o; op.textContent = o; if (o === fd.value) op.selected = true; el.appendChild(op) });
+      host.appendChild(el);
+    } else {
+      const el = document.createElement(fd.type === 'textarea' ? 'textarea' : 'input');
+      el.id = id; el.value = fd.value ?? ''; if (fd.placeholder) el.placeholder = fd.placeholder;
+      if (fd.type === 'textarea') el.rows = fd.rows || 3; else el.type = fd.type || 'text';
+      if (fd.inputmode) el.inputMode = fd.inputmode;
+      if (fd.type !== 'date' && fd.type !== 'month') el.maxLength = fd.max || 300;
+      host.appendChild(el);
+    }
+  });
+  const btns = document.createElement('div'); btns.className = 'fbtns';
+  btns.innerHTML = `<button class="btn" type="submit">Guardar</button><button class="btn ghost" type="button" data-x>Cancelar</button>`;
+  if (onDelete) { const d = document.createElement('button'); d.type = 'button'; d.className = 'danger'; d.textContent = 'Eliminar'; d.onclick = () => { $('#dlgForm').close(); onDelete() }; btns.appendChild(d) }
+  btns.querySelector('[data-x]').onclick = () => $('#dlgForm').close();
+  f.appendChild(btns);
+  f.onsubmit = e => {
+    e.preventDefault();
+    const out = {};
+    fields.forEach(fd => out[fd.key] = fd.type === 'tags' ? [...picked[fd.key]] : $('#f_' + fd.key).value.trim());
+    if (onSave(out) !== false) $('#dlgForm').close();
+  };
+  if ($('#dlgEx').open) $('#dlgEx').close();
+  $('#dlgForm').showModal();
+  setTimeout(() => f.querySelector('input:not([type=date]),textarea')?.focus(), 50);
+}
+
+// ----- Pestaña Gym -----
+function renderGym(){
+  document.querySelectorAll('.seg button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === gymTab));
+  $('#rutina').hidden = gymTab !== 'ejercicio'; $('#dieta').hidden = gymTab !== 'comida';
+  gymTab === 'ejercicio' ? renderRutina() : renderDieta();
+}
+document.querySelectorAll('.seg button').forEach(b => b.onclick = () => { gymTab = b.dataset.tab; store.set('rolas.gymTab', gymTab); renderGym() });
+
+// ----- Ejercicio -----
+function renderRutina(){
+  const box = $('#rutina'); box.innerHTML = '';
+  const chips = document.createElement('div'); chips.className = 'chips';
+  fitness.routines.forEach(r => {
+    const c = document.createElement('button'); c.className = 'chip' + (r.id === fitness.activeRoutine ? ' on' : ''); c.textContent = r.name;
+    c.onclick = () => { fitness.activeRoutine = r.id; saveFit(); renderRutina() };
+    chips.appendChild(c);
+  });
+  const add = document.createElement('button'); add.className = 'chip add'; add.textContent = '+ Nueva rutina';
+  add.onclick = newRoutine; chips.appendChild(add);
+  box.appendChild(chips);
+
+  const r = activeRoutine();
+  if (!r) {
+    box.insertAdjacentHTML('beforeend', `<div class="empty-card"><h2 class="sec" style="margin-top:0">Agrega tu rutina</h2>
+      <p>Importa tu plan en archivo o crea una rutina desde cero con los ejercicios de tu entrenador.</p>
+      <div class="actions"><button class="btn" data-a="imp">Importar plan</button><button class="btn ghost" data-a="new">Crear rutina</button></div></div>`);
+    box.querySelector('[data-a=imp]').onclick = () => $('#fileFit').click();
+    box.querySelector('[data-a=new]').onclick = newRoutine;
+    return;
+  }
+  const days = document.createElement('div'); days.className = 'days';
+  if (!r.days.some(d => d.id === selDay[r.id])) selDay[r.id] = r.days[0]?.id;
+  const log = todayLog();
+  r.days.forEach(d => {
+    const done = d.exercises.filter(e => log.ex.includes(e.id)).length;
+    const b = document.createElement('button'); b.className = 'day' + (d.id === selDay[r.id] ? ' on' : '');
+    b.innerHTML = `<b>${esc(d.name)}</b><small>${esc(d.focus || d.exercises.length + ' ejercicios')}${done ? ' · ' + done + '/' + d.exercises.length : ''}</small>`;
+    b.onclick = () => { selDay[r.id] = d.id; renderRutina() };
+    days.appendChild(b);
+  });
+  const addDay = document.createElement('button'); addDay.className = 'day'; addDay.innerHTML = '<b style="color:var(--accent)">+ Día</b><small>Agregar</small>';
+  addDay.onclick = () => formDialog('Nuevo día', [
+      { key:'name', label:'Nombre', value:'Día ' + (r.days.length + 1), max:40 },
+      { key:'focus', label:'Enfoque (opcional)', placeholder:'Ej. Cardio y abdomen', max:60 }],
+    v => { const d = { id: uid(), name: v.name || 'Día', focus: v.focus, exercises: [] }; r.days.push(d); selDay[r.id] = d.id; saveFit(); renderRutina() });
+  days.appendChild(addDay);
+  box.appendChild(days);
+
+  const d = r.days.find(x => x.id === selDay[r.id]);
+  if (d) {
+    const done = d.exercises.filter(e => log.ex.includes(e.id)).length, total = d.exercises.length;
+    const head = document.createElement('div'); head.className = 'sec-head';
+    head.innerHTML = `<div><h2>${esc(d.focus || d.name)}</h2><p>${esc(d.focus ? d.name + ' · ' : '')}${total ? `${done} de ${total} hechos hoy` : 'Sin ejercicios todavía'}</p></div>
+      <button class="icon-btn" aria-label="Opciones del día">${DOTS}</button>`;
+    head.querySelector('button').onclick = () => menu(d.name, [
+      ['Editar nombre y enfoque', () => formDialog('Editar día', [
+        { key:'name', label:'Nombre', value:d.name, max:40 }, { key:'focus', label:'Enfoque', value:d.focus, max:60 }],
+        v => { d.name = v.name || d.name; d.focus = v.focus; saveFit(); renderRutina() })],
+      ['Reiniciar marcas de hoy', () => { log.ex = log.ex.filter(id => !d.exercises.some(e => e.id === id)); saveFit(); renderRutina() }],
+      ['Eliminar día', () => { if (confirm(`¿Eliminar ${d.name} y sus ejercicios?`)) { r.days = r.days.filter(x => x !== d); saveFit(); renderRutina() } }, true]]);
+    box.appendChild(head);
+    box.insertAdjacentHTML('beforeend', `<div class="meter"><i style="width:${total ? done / total * 100 : 0}%"></i></div>`);
+
+    const ol = document.createElement('ol'); ol.className = 'items';
+    const unit = (v, u) => /^[\d\s\-–]+$/.test(v) ? `${esc(v)} <span>${u}</span>` : esc(v);
+    d.exercises.forEach(e => {
+      const isDone = log.ex.includes(e.id), last = recsOf(e.id)[0];
+      const li = document.createElement('li'); li.className = 'item' + (isDone ? ' done' : '');
+      const meta = [e.sets && unit(e.sets, 'series'), e.reps && unit(e.reps, 'reps')].filter(Boolean).join(' <span>·</span> ');
+      li.innerHTML = `<span class="num" aria-hidden="true"></span>
+        <button class="item-main"><b>${esc(e.name)}</b>${meta ? `<div class="meta">${meta}</div>` : ''}
+          ${e.tags.length ? `<div class="tags">${e.tags.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''}
+          ${e.notes ? `<div class="note">${esc(e.notes)}</div>` : ''}
+          ${last ? `<div class="lastw">Último: ${esc(fmtW(last))} · ${shortDate(last.date)}</div>` : ''}</button>
+        <button class="check" aria-pressed="${isDone}" aria-label="Marcar ${esc(e.name)} como hecho">${CHECK}</button>`;
+      li.querySelector('.check').onclick = () => { toggleIn(log.ex, e.id); saveFit(); renderRutina() };
+      li.querySelector('.item-main').onclick = () => openExercise(d, e);
+      ol.appendChild(li);
+    });
+    box.appendChild(ol);
+    const act = document.createElement('div'); act.className = 'actions';
+    act.innerHTML = `<button class="btn add-ex">+ Agregar ejercicio</button>`;
+    act.querySelector('button').onclick = () => editExercise(d, null);
+    box.appendChild(act);
+  }
+
+  const det = document.createElement('details'); det.className = 'recs';
+  det.innerHTML = `<summary>Recomendaciones del entrenador (${r.recs.length})</summary>
+    ${r.recs.length ? `<ul>${r.recs.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '<p class="note">Todavía no hay recomendaciones.</p>'}
+    <div class="actions" style="margin-bottom:14px"><button class="btn ghost" data-a="recs">Editar recomendaciones</button><button class="btn ghost" data-a="opts">Opciones de la rutina</button></div>`;
+  det.querySelector('[data-a=recs]').onclick = () => formDialog('Recomendaciones', [
+      { key:'recs', label:'Una recomendación por línea', type:'textarea', rows:7, value: r.recs.join('\n'), max: 5000 }],
+    v => { r.recs = v.recs.split('\n').map(x => clip(x.trim(), 300)).filter(Boolean).slice(0, 20); saveFit(); renderRutina() });
+  det.querySelector('[data-a=opts]').onclick = () => menu(r.name, [
+    ['Cambiar nombre', () => formDialog('Nombre de la rutina', [{ key:'name', label:'Nombre', value:r.name, max:60 }],
+      v => { r.name = v.name || r.name; saveFit(); renderRutina() })],
+    ['Exportar plan (respaldo)', exportFit],
+    ['Importar plan', () => $('#fileFit').click()],
+    ['Eliminar rutina', () => { if (confirm(`¿Eliminar la rutina “${r.name}”?`)) { fitness.routines = fitness.routines.filter(x => x !== r);
+      fitness.activeRoutine = fitness.routines[0]?.id || ''; saveFit(); renderRutina() } }, true]]);
+  box.appendChild(det);
+}
+function newRoutine(){
+  formDialog('Nueva rutina', [{ key:'name', label:'Nombre', placeholder:'Ej. Rutina 5', max:60 }], v => {
+    const r = { id: uid(), name: v.name || 'Rutina', days: [{ id: uid(), name: 'Día 1', focus: '', exercises: [] }], recs: [] };
+    fitness.routines.push(r); fitness.activeRoutine = r.id; saveFit(); renderRutina();
+  });
+}
+function editExercise(day, e){
+  formDialog(e ? 'Editar ejercicio' : 'Nuevo ejercicio', [
+    { key:'name', label:'Ejercicio', value:e?.name, placeholder:'Ej. Sentadilla búlgara', max:120 },
+    { key:'sets', label:'Series', value:e?.sets, placeholder:'Ej. 3  ·  2 de aproximación y 3 efectivas', max:80 },
+    { key:'reps', label:'Repeticiones', value:e?.reps, placeholder:'Ej. 6-8  ·  10 + dropset + 10', max:140 },
+    { key:'tags', label:'Variantes', type:'tags', value:e?.tags },
+    { key:'notes', label:'Explicación', type:'textarea', rows:3, value:e?.notes, placeholder:'Cómo hacerlo, según tu entrenador', max:600 }],
+    v => {
+      if (!v.name) { toast('Escribe el nombre del ejercicio'); return false }
+      if (!e && day.exercises.length >= 60) { toast('Llegaste al máximo de 60 ejercicios en este día'); return false }
+      const data = { name: v.name, sets: v.sets, reps: v.reps, tags: v.tags.filter(t => TAGS.includes(t)), notes: v.notes };
+      if (e) Object.assign(e, data); else day.exercises.push({ id: uid(), ...data });
+      saveFit(); renderRutina();
+      if (!e) toast('Ejercicio agregado');
+    },
+    e ? () => { if (confirm(`¿Eliminar ${e.name}? También se borran sus registros de peso.`)) {
+      day.exercises = day.exercises.filter(x => x !== e); delete fitness.records[e.id]; saveFit(); renderRutina() } } : null);
+}
+
+// Detalle del ejercicio: registros de peso y observaciones
+function openExercise(day, e){
+  const box = $('#exBody'); const list = recsOf(e.id);
+  const maxes = list.map(x => x.max ?? x.min).filter(x => x !== null);
+  const best = maxes.length ? list.find(x => (x.max ?? x.min) === Math.max(...maxes)) : null;
+  $('#exTitle').textContent = e.name;
+  box.innerHTML = `
+    <p class="meta" style="margin:0">${esc([e.sets && e.sets + ' series', e.reps && e.reps + ' reps'].filter(Boolean).join(' · '))}</p>
+    ${e.notes ? `<p class="note">${esc(e.notes)}</p>` : ''}
+    <div class="stats">
+      <div><small>Récord</small><b>${best ? esc(`${best.max ?? best.min} ${best.unit}`) : '—'}</b></div>
+      <div><small>Último</small><b>${list[0] ? esc(fmtW(list[0])) : '—'}</b></div>
+      <div><small>Registros</small><b>${list.length}</b></div>
+    </div>
+    <button class="btn" data-a="add" style="width:100%">Registrar pesos de hoy</button>
+    <h4 class="hist-title">Historial</h4>
+    ${list.length ? `<ul class="hist">${list.map(x => `<li data-id="${esc(x.id)}">
+        <div><b>${esc(fmtW(x))}</b><small>${shortDate(x.date)}${x.min !== null && x.max !== null && x.min !== x.max ? ' · mín ' + x.min + ' / máx ' + x.max : ''}</small>
+        ${x.obs ? `<p>${esc(x.obs)}</p>` : ''}</div>
+        <button class="icon-btn" aria-label="Opciones del registro">${DOTS}</button></li>`).join('')}</ul>`
+      : '<p class="note">Aún no hay registros. Anota el peso mínimo y máximo que cargaste y cómo te sentiste.</p>'}
+    <div class="fbtns"><button class="btn ghost" data-a="edit">Editar ejercicio</button><button class="btn ghost" data-a="close">Cerrar</button></div>`;
+  box.querySelector('[data-a=add]').onclick = () => editRecord(day, e, null);
+  box.querySelector('[data-a=edit]').onclick = () => editExercise(day, e);
+  box.querySelector('[data-a=close]').onclick = () => $('#dlgEx').close();
+  box.querySelectorAll('.hist li').forEach(li => li.querySelector('button').onclick = () => {
+    const rec = (fitness.records[e.id] || []).find(x => x.id === li.dataset.id); if (!rec) return;
+    $('#dlgEx').close();
+    menu(shortDate(rec.date), [['Editar registro', () => editRecord(day, e, rec)],
+      ['Eliminar registro', () => { fitness.records[e.id] = fitness.records[e.id].filter(x => x !== rec); saveFit(); renderRutina(); openExercise(day, e) }, true]]);
+  });
+  $('#dlgEx').showModal();
+}
+function editRecord(day, e, rec){
+  const prevUnit = rec?.unit || recsOf(e.id)[0]?.unit || 'kg';
+  formDialog(rec ? 'Editar registro' : 'Registrar pesos', [
+    { key:'min', label:'Peso mínimo', value: rec?.min ?? '', inputmode:'decimal', placeholder:'Ej. 10', max:7, half:true },
+    { key:'max', label:'Peso máximo', value: rec?.max ?? '', inputmode:'decimal', placeholder:'Ej. 14', max:7, half:true },
+    { key:'unit', label:'Unidad', type:'select', options: UNITS, value: prevUnit, half:true },
+    { key:'date', label:'Fecha', type:'date', value: rec?.date || todayKey(), half:true },
+    { key:'obs', label:'Observaciones', type:'textarea', rows:3, value: rec?.obs, placeholder:'Ej. La última serie costó mucho, subir peso la próxima', max:300 }],
+    v => {
+      const min = num(v.min), max = num(v.max);
+      if (min === null && max === null && !v.obs) { toast('Anota al menos un peso u observación'); return false }
+      const data = { date: DATE_RE.test(v.date) ? v.date : todayKey(), min: min ?? max, max: max ?? min, unit: UNITS.includes(v.unit) ? v.unit : 'kg', obs: clip(v.obs, 300) };
+      if (data.min !== null && data.max !== null && data.min > data.max) [data.min, data.max] = [data.max, data.min];
+      if (rec) Object.assign(rec, data);
+      else { (fitness.records[e.id] = fitness.records[e.id] || []).push({ id: uid(), ...data }); fitness.records[e.id] = fitness.records[e.id].slice(-300) }
+      saveFit(); renderRutina(); toast('Registro guardado');
+      setTimeout(() => openExercise(day, e), 60);
+    });
+}
+
+// ----- Comida -----
+function renderDieta(){
+  const box = $('#dieta'); box.innerHTML = '';
+  const sorted = fitness.diets.slice().sort((a, b) => (b.month || '').localeCompare(a.month || ''));
+  const chips = document.createElement('div'); chips.className = 'chips';
+  sorted.forEach(dd => {
+    const c = document.createElement('button'); c.className = 'chip' + (dd.id === fitness.activeDiet ? ' on' : '');
+    c.textContent = dd.month ? `${dd.name} · ${monthLabel(dd.month).split(' ')[0]}` : dd.name;
+    c.onclick = () => { fitness.activeDiet = dd.id; saveFit(); renderDieta() };
+    chips.appendChild(c);
+  });
+  const add = document.createElement('button'); add.className = 'chip add'; add.textContent = '+ Nuevo protocolo';
+  add.onclick = () => editDiet(null); chips.appendChild(add);
+  box.appendChild(chips);
+
+  const dt = activeDiet();
+  if (!dt) {
+    box.insertAdjacentHTML('beforeend', `<div class="empty-card"><h2 class="sec" style="margin-top:0">Agrega tu protocolo</h2>
+      <p>Importa tu plan en archivo o escribe las comidas del protocolo de este mes.</p>
+      <div class="actions"><button class="btn" data-a="imp">Importar plan</button><button class="btn ghost" data-a="new">Crear protocolo</button></div></div>`);
+    box.querySelector('[data-a=imp]').onclick = () => $('#fileFit').click();
+    box.querySelector('[data-a=new]').onclick = () => editDiet(null);
+    return;
+  }
+  const log = todayLog();
+  const done = dt.meals.filter(m => log.meals.includes(m.id)).length, total = dt.meals.length;
+  const head = document.createElement('div'); head.className = 'diet-head';
+  head.innerHTML = `<div><b>${esc(dt.name)}</b>${dt.kcal ? `<span>${esc(dt.kcal)} kcal</span> · ` : ''}<small style="color:var(--muted)">${dt.month ? esc(monthLabel(dt.month)) + ' · ' : ''}${total} comidas</small></div>
+    <button class="icon-btn" aria-label="Opciones del protocolo">${DOTS}</button>`;
+  head.querySelector('button').onclick = () => menu(dt.name, [
+    ['Editar nombre, calorías y mes', () => editDiet(dt)],
+    ['Reiniciar marcas de hoy', () => { log.meals = []; saveFit(); renderDieta() }],
+    ['Exportar plan (respaldo)', exportFit],
+    ['Importar plan', () => $('#fileFit').click()],
+    ['Eliminar protocolo', () => { if (confirm(`¿Eliminar ${dt.name}?`)) { fitness.diets = fitness.diets.filter(x => x !== dt);
+      fitness.activeDiet = fitness.diets[0]?.id || ''; saveFit(); renderDieta() } }, true]]);
+  box.appendChild(head);
+  box.insertAdjacentHTML('beforeend', `<div class="sec-head"><div><h2>Hoy</h2><p>${total ? `${done} de ${total} comidas` : 'Sin comidas todavía'}</p></div></div>
+    <div class="meter"><i style="width:${total ? done / total * 100 : 0}%"></i></div>`);
+  const ol = document.createElement('ol'); ol.className = 'items';
+  dt.meals.forEach(m => {
+    const isDone = log.meals.includes(m.id);
+    const li = document.createElement('li'); li.className = 'item' + (isDone ? ' done' : '');
+    li.innerHTML = `<span class="num" aria-hidden="true"></span>
+      <button class="item-main"><b>${esc(m.name)}</b>${m.text ? `<div class="note" style="color:var(--text);opacity:.85">${esc(m.text)}</div>` : ''}</button>
+      <button class="check" aria-pressed="${isDone}" aria-label="Marcar ${esc(m.name)} como hecha">${CHECK}</button>`;
+    li.querySelector('.check').onclick = () => { toggleIn(log.meals, m.id); saveFit(); renderDieta() };
+    li.querySelector('.item-main').onclick = () => editMeal(m);
+    ol.appendChild(li);
+  });
+  box.appendChild(ol);
+  const act = document.createElement('div'); act.className = 'actions';
+  act.innerHTML = '<button class="btn">+ Agregar comida</button>';
+  act.querySelector('button').onclick = () => editMeal(null);
+  box.appendChild(act);
+}
+function editDiet(dt){
+  const now = todayKey().slice(0, 7);
+  formDialog(dt ? 'Editar protocolo' : 'Nuevo protocolo', [
+    { key:'name', label:'Nombre', value: dt?.name, placeholder:'Ej. Protocolo Martin 5', max:60 },
+    { key:'kcal', label:'Calorías al día', value: dt?.kcal, inputmode:'numeric', max:5, half:true },
+    { key:'month', label:'Mes', type:'month', value: dt?.month || now, half:true }],
+    v => {
+      const data = { name: v.name || 'Protocolo', kcal: v.kcal.replace(/[^\d]/g, '').slice(0, 5), month: /^\d{4}-\d{2}$/.test(v.month) ? v.month : now };
+      if (dt) Object.assign(dt, data);
+      else {
+        const prev = activeDiet();
+        const copy = prev && prev.meals.length && confirm(`¿Empezar con las comidas de ${prev.name} para solo cambiar lo necesario?`);
+        const nd = { id: uid(), ...data, meals: copy ? prev.meals.map(m => ({ id: uid(), name: m.name, text: m.text })) : [] };
+        fitness.diets.push(nd); fitness.activeDiet = nd.id;
+      }
+      saveFit(); renderDieta();
+    });
+}
+function editMeal(m){
+  const dt = activeDiet();
+  formDialog(m ? 'Editar comida' : 'Nueva comida', [
+    { key:'name', label:'Nombre', value: m?.name || 'Comida ' + (dt.meals.length + 1), max:40 },
+    { key:'text', label:'Qué lleva', type:'textarea', rows:4, value: m?.text, placeholder:'Alimentos y cantidades de tu protocolo', max:600 }],
+    v => {
+      const data = { name: v.name || 'Comida', text: v.text };
+      if (m) Object.assign(m, data); else dt.meals.push({ id: uid(), ...data });
+      saveFit(); renderDieta();
+    },
+    m ? () => { dt.meals = dt.meals.filter(x => x !== m); saveFit(); renderDieta() } : null);
+}
+
+// ----- Importar / exportar plan -----
+function exportFit(){
+  const a = document.createElement('a');
+  const { routines, activeRoutine, diets, activeDiet, records } = fitness;
+  a.href = URL.createObjectURL(new Blob([JSON.stringify({ type: 'rolas-plan', routines, activeRoutine, diets, activeDiet, records }, null, 1)], { type: 'application/json' }));
+  a.download = 'rolas-plan.json'; a.click();
+}
+$('#fileFit').onchange = async e => {
+  try {
+    const f = e.target.files[0]; if (!f || f.size > 2_000_000) throw 0;
+    const data = JSON.parse(await f.text());
+    if (!data || data.type !== 'rolas-plan') throw 0;
+    const inc = cleanFitness(data);
+    const dup = inc.routines.filter(r => fitness.routines.some(x => x.name === r.name));
+    const replace = dup.length ? confirm(`Ya tienes ${dup.map(r => '“' + r.name + '”').join(', ')}. ¿Reemplazar con la versión del archivo? (Tus registros de peso de esa rutina se conservan solo si el ejercicio sigue existiendo.)`) : false;
+    inc.routines.forEach(r => {
+      const i = fitness.routines.findIndex(x => x.name === r.name);
+      if (i < 0) fitness.routines.push(r); else if (replace) fitness.routines[i] = r;
+    });
+    if (fitness.routines.some(r => r.id === inc.activeRoutine)) fitness.activeRoutine = inc.activeRoutine;
+    if (!fitness.activeRoutine) fitness.activeRoutine = fitness.routines[0]?.id || '';
+    inc.diets.forEach(d => {
+      const i = fitness.diets.findIndex(x => x.name === d.name && x.month === d.month);
+      if (i < 0) fitness.diets.push(d); else fitness.diets[i] = d;
+    });
+    if (fitness.diets.some(d => d.id === inc.activeDiet)) fitness.activeDiet = inc.activeDiet;
+    if (!fitness.activeDiet) fitness.activeDiet = fitness.diets[0]?.id || '';
+    Object.entries(inc.records).forEach(([k, v]) => { if (!fitness.records[k]) fitness.records[k] = v });
+    saveFit(); toast('Plan importado'); renderGym();
+  } catch { toast('Ese archivo no es un plan de Rolas') }
+  e.target.value = '';
+};
+
 // ---------- Nube (Supabase) ----------
 let cloudTimer = null, cloudReady = false;
 function scheduleCloud(){ if (!user || !cloudReady) return; clearTimeout(cloudTimer); cloudTimer = setTimeout(pushCloud, 1500) }
 async function pushCloud(){
   if (!user || !cloudReady) return;
-  const { error } = await sb.from('user_data').upsert({ user_id: user.id, library, recents, api_key: apiKey || null, updated_at: new Date().toISOString() });
+  const row = { user_id: user.id, library, recents, api_key: apiKey || null, fitness, updated_at: new Date().toISOString() };
+  let { error } = await sb.from('user_data').upsert(row);
+  if (error && /fitness/i.test(error.message)) {
+    // La columna "fitness" aún no existe en Supabase: se guarda lo demás y la rutina queda en este dispositivo.
+    delete row.fitness; ({ error } = await sb.from('user_data').upsert(row));
+  }
   if (error) console.warn('No se pudo sincronizar:', error.message);
 }
 async function flushCloud(){ if (cloudTimer) { clearTimeout(cloudTimer); cloudTimer = null; await pushCloud() } }
 async function pullCloud(){
-  const { data, error } = await sb.from('user_data').select('library, recents, api_key').eq('user_id', user.id).maybeSingle();
+  const { data, error } = await sb.from('user_data').select('*').eq('user_id', user.id).maybeSingle();
   if (error) throw error;
   if (data) {
     // La nube manda: así ves lo mismo en el celular y en la PC.
     if (Array.isArray(data.library) && data.library.length) library = cleanLibrary(data.library);
     recents = cleanTracks(data.recents).slice(0, 20);
     apiKey = /^[\w-]{20,60}$/.test(data.api_key || '') ? data.api_key : '';
+    if (data.fitness && (data.fitness.routines?.length || data.fitness.diets?.length || data.fitness.diet)) fitness = cleanFitness(data.fitness);
   }
+  store.set('rolas.fitness', fitness);
   store.set('rolas.library', library); store.set('rolas.recents', recents); store.set('rolas.key', apiKey);
   cloudReady = true;
   if (!data) await pushCloud(); // primera vez: sube lo que ya tenías en este celular
 }
 function clearLocal(){
-  ['rolas.library','rolas.queue','rolas.index','rolas.recents','rolas.key'].forEach(k => { try { localStorage.removeItem(k) } catch {} });
-  library = [{ id:'fav', name:'Me gustan', tracks:[] }]; queue = []; index = -1; recents = []; apiKey = '';
+  ['rolas.library','rolas.queue','rolas.index','rolas.recents','rolas.key','rolas.fitness'].forEach(k => { try { localStorage.removeItem(k) } catch {} });
+  library = [{ id:'fav', name:'Me gustan', tracks:[] }]; queue = []; index = -1; recents = []; apiKey = ''; fitness = emptyFitness();
 }
 
 // ---------- Acceso ----------
