@@ -1218,8 +1218,26 @@ function calendar(){
 }
 
 // ---------- Estadísticas de escucha y Mix del gym ----------
-let stats = store.get('rolas.stats', {});
-if (!stats || typeof stats !== 'object') stats = {};
+// Limpieza de las estadísticas (navegador o nube): IDs válidos, contadores numéricos y máximo 600 rolas.
+function cleanStats(o){
+  const out = {}, int = v => { const n = Math.floor(Number(v)); return isFinite(n) && n > 0 ? Math.min(n, 1e6) : 0 };
+  Object.keys(o && typeof o === 'object' && !Array.isArray(o) ? o : {}).filter(k => ID_RE.test(k)).forEach(k => {
+    const x = o[k]; if (!x || typeof x !== 'object') return;
+    const t = cleanTrack(x.t);
+    out[k] = { n: int(x.n), s: int(x.s), l: Math.min(int(x.l), 4e12) };
+    if (t && t.id === k) out[k].t = t;
+  });
+  const keys = Object.keys(out); if (keys.length > 600) keys.sort((a, b) => out[a].l - out[b].l).slice(0, keys.length - 600).forEach(k => delete out[k]);
+  return out;
+}
+// Une las estadísticas de dos dispositivos quedándose con el valor más alto de cada contador.
+function mergeStats(a, b){
+  const out = { ...a };
+  Object.entries(b).forEach(([k, y]) => { const x = out[k];
+    out[k] = x ? { n: Math.max(x.n, y.n), s: Math.max(x.s, y.s), l: Math.max(x.l, y.l), ...(x.t || y.t ? { t: x.t || y.t } : {}) } : y });
+  return cleanStats(out);
+}
+let stats = cleanStats(store.get('rolas.stats', {}));
 let playing = { id: '', at: 0 };
 function countPlay(){
   const t = current(); if (!t || playing.id === t.id) return;
@@ -1227,11 +1245,11 @@ function countPlay(){
   const st = stats[t.id] = stats[t.id] || { n: 0, s: 0 };
   st.n++; st.t = cleanTrack(t); st.l = Date.now();
   const keys = Object.keys(stats); if (keys.length > 600) keys.sort((a, b) => (stats[a].l || 0) - (stats[b].l || 0)).slice(0, keys.length - 600).forEach(k => delete stats[k]);
-  store.set('rolas.stats', stats);
+  store.set('rolas.stats', stats); scheduleCloud();
 }
 function countSkip(){
   const t = current(); if (!t || playing.id !== t.id || Date.now() - playing.at > 30000) return;
-  if (stats[t.id]) { stats[t.id].s++; store.set('rolas.stats', stats) }
+  if (stats[t.id]) { stats[t.id].s++; store.set('rolas.stats', stats); scheduleCloud() }
 }
 async function playGymMix(){
   const scored = Object.values(stats).filter(x => x.t && ID_RE.test(x.t.id)).map(x => ({ t: x.t, sc: x.n - 2 * x.s })).filter(x => x.sc > 0).sort((a, b) => b.sc - a.sc);
@@ -1354,7 +1372,7 @@ let cloudTimer = null, cloudReady = false;
 function scheduleCloud(){ if (!user || !cloudReady) return; clearTimeout(cloudTimer); cloudTimer = setTimeout(pushCloud, 1500) }
 async function pushCloud(){
   if (!user || !cloudReady) return;
-  const row = { user_id: user.id, library, recents, api_key: apiKey || null, fitness, updated_at: new Date().toISOString() };
+  const row = { user_id: user.id, library, recents, api_key: apiKey || null, fitness: { ...fitness, stats }, updated_at: new Date().toISOString() };
   let { error } = await sb.from('user_data').upsert(row);
   if (error && /fitness/i.test(error.message)) {
     // La columna "fitness" aún no existe en Supabase: se guarda lo demás y la rutina queda en este dispositivo.
@@ -1372,15 +1390,18 @@ async function pullCloud(){
     recents = cleanTracks(data.recents).slice(0, 20);
     apiKey = /^[\w-]{20,60}$/.test(data.api_key || '') ? data.api_key : '';
     if (data.fitness && (data.fitness.routines?.length || data.fitness.diets?.length || data.fitness.diet || data.fitness.body?.length)) fitness = cleanFitness(data.fitness);
+    if (data.fitness && typeof data.fitness === 'object') stats = mergeStats(stats, cleanStats(data.fitness.stats));
   }
+  store.set('rolas.stats', stats);
   store.set('rolas.fitness', fitness);
   store.set('rolas.library', library); store.set('rolas.recents', recents); store.set('rolas.key', apiKey);
   cloudReady = true;
   if (!data) await pushCloud(); // primera vez: sube lo que ya tenías en este celular
+  else scheduleCloud(); // sube las estadísticas ya combinadas con las de este dispositivo
 }
 function clearLocal(){
-  ['rolas.library','rolas.queue','rolas.index','rolas.recents','rolas.key','rolas.fitness'].forEach(k => { try { localStorage.removeItem(k) } catch {} });
-  library = [{ id:'fav', name:'Me gustan', tracks:[] }]; queue = []; index = -1; recents = []; apiKey = ''; fitness = emptyFitness();
+  ['rolas.library','rolas.queue','rolas.index','rolas.recents','rolas.key','rolas.fitness','rolas.stats'].forEach(k => { try { localStorage.removeItem(k) } catch {} });
+  library = [{ id:'fav', name:'Me gustan', tracks:[] }]; queue = []; index = -1; recents = []; apiKey = ''; fitness = emptyFitness(); stats = {};
 }
 
 // ---------- Acceso ----------
