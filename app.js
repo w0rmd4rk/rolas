@@ -156,7 +156,7 @@ window.onYouTubeIframeAPIReady = () => {
       onStateChange: e => {
         setPlayIcon(e.data === YT.PlayerState.PLAYING);
         if (e.data === YT.PlayerState.PLAYING) { keepAlive(true); countPlay() }
-        if (e.data === YT.PlayerState.PAUSED) keepAlive(false);
+        if (e.data === YT.PlayerState.PAUSED) onPaused();
         if ('mediaSession' in navigator) navigator.mediaSession.playbackState = e.data === YT.PlayerState.PLAYING ? 'playing' : 'paused';
         if (e.data === YT.PlayerState.ENDED) next(true);
       },
@@ -164,6 +164,30 @@ window.onYouTubeIframeAPIReady = () => {
     }
   });
 };
+
+// Al salir de la app el sistema puede pausar el video (pasa sobre todo la primera vez, antes de que el marco de
+// YouTube tenga permiso de sonar en segundo plano). Esa pausa no es del usuario: se mantiene `keep` sonando para
+// que la página siga contando como "reproduciendo" y se reanuda. Solo cuenta si llega en los primeros segundos
+// tras salir; una pausa después (llamada, otra app de música) o con la app visible sí se respeta.
+let autoResume = { n: 0, at: 0 }, hiddenAt = 0, resumeOnReturn = false;
+function onPaused(){
+  if (userPaused) return keepAlive(false);
+  if (!document.hidden) { userPaused = true; return keepAlive(false) } // p. ej. tocó el video de YouTube
+  if (Date.now() - hiddenAt > 5000) { resumeOnReturn = false; return keepAlive(false) }
+  resumeOnReturn = true; resumeAfterSystemPause();
+}
+function resumeAfterSystemPause(){
+  if (userPaused || !ready || index < 0) return;
+  if (Date.now() - autoResume.at > 15000) autoResume = { n: 0, at: Date.now() };
+  if (autoResume.n++ >= 3) return; // no insistir sin fin si el sistema no lo deja
+  keepAlive(true); player.playVideo();
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { hiddenAt = Date.now(); return }
+  // Si no se pudo reanudar en segundo plano, se reanuda al volver a la app.
+  if (resumeOnReturn && ready && !userPaused && player.getPlayerState?.() === YT.PlayerState.PAUSED) resumeAfterSystemPause();
+  resumeOnReturn = false;
+});
 
 function showTrackInfo(t){
   $('#mini').hidden = false;
@@ -177,7 +201,7 @@ function loadTrack(t, autoplay = true){
   showTrackInfo(t);
   if (!ready) { pendingTrack = autoplay ? t : null; if (autoplay) keepAlive(true); return } // dentro del toque (iOS)
   pendingTrack = null;
-  if (autoplay) { userPaused = false; keepAlive(true) }
+  if (autoplay) { userPaused = false; resumeOnReturn = false; keepAlive(true) }
   autoplay ? player.loadVideoById(t.id) : player.cueVideoById(t.id);
   document.title = `${t.title} · Rolas`;
   if (autoplay) { recents = [t, ...recents.filter(x => x.id !== t.id)].slice(0, 20); save() }
@@ -1695,33 +1719,57 @@ window.addEventListener('pagehide', () => { flushCloud() });
 // Se compara el ETag (o Last-Modified) de app.js e index.html con el que había al abrir la app.
 // Nunca recarga solo: podría cortar la música o una sesión de entrenamiento.
 const UPD_FILES = ['app.js', 'index.html'];
-let updBase = '', updNew = '', updLast = 0;
+let updBase = '', updNew = '', updLast = 0, updDate = null, updChecked = null;
 async function versionSig(){
+  let date = null;
   const parts = await Promise.all(UPD_FILES.map(async f => {
     const r = await fetch(f, { method: 'HEAD', cache: 'no-store' });
     const v = r.ok && (r.headers.get('ETag') || r.headers.get('Last-Modified'));
     if (!v) throw new Error('sin versión');
+    const lm = new Date(r.headers.get('Last-Modified') || '');
+    if (!isNaN(lm) && (!date || lm > date)) date = lm;
     return f + '=' + clip(v, 120);
   }));
-  return parts.join('|');
+  return { sig: parts.join('|'), date };
 }
-async function checkUpdate(){
-  if (document.hidden || !navigator.onLine || Date.now() - updLast < 30000) return;
+// force: revisión pedida desde Ajustes (sin esperar 30 s y aunque se haya cerrado el aviso de esa versión).
+// Regresa 'nueva', 'igual' o 'error'.
+async function checkUpdate(force = false){
+  if (!force && (document.hidden || !navigator.onLine || Date.now() - updLast < 30000)) return;
   updLast = Date.now();
   try {
-    const sig = await versionSig();
-    if (!updBase) { updBase = sig; return } // primera revisión: la versión que está abierta
-    if (sig === updBase || sig === store.get('rolas.updSeen', '')) return;
+    const { sig, date } = await versionSig();
+    updChecked = new Date();
+    if (!updBase) { updBase = sig; updDate = date; return 'igual' } // primera revisión: la versión que está abierta
+    if (sig === updBase || (!force && sig === store.get('rolas.updSeen', ''))) return 'igual';
     updNew = sig; $('#upd').hidden = false; placeVideo();
-  } catch {} // sin red o el servidor no manda ETag: se intenta en la siguiente revisión
+    return 'nueva';
+  } catch { return 'error' } // sin red o el servidor no manda ETag: se intenta en la siguiente revisión
+  finally { paintVersion() }
 }
+const fmtWhen = d => d ? `${d.getDate()} ${MESES[d.getMonth()].slice(0, 3)}, ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` : '';
+function paintVersion(){
+  $('#verInfo').textContent = (updDate ? `Versión del ${fmtWhen(updDate)}` : 'Versión cargada') +
+    (updChecked ? ` · última revisión ${fmtWhen(updChecked)}` : '');
+}
+$('#btnCheckUpd').onclick = async () => {
+  const b = $('#btnCheckUpd'); b.disabled = true; b.textContent = 'Buscando…';
+  const r = await checkUpdate(true);
+  b.disabled = false; b.textContent = 'Buscar actualización';
+  toast({ nueva: 'Hay una versión nueva', igual: 'Ya tienes la versión más reciente', error: 'No se pudo revisar. Revisa tu conexión.' }[r]);
+  if (r === 'nueva') $('#dlgSettings').close();
+};
 $('#updReload').onclick = async () => {
   $('#updReload').disabled = true; $('#updReload').textContent = 'Recargando…';
   try { await flushCloud() } catch {}
   location.reload();
 };
 $('#updClose').onclick = () => { store.set('rolas.updSeen', updNew); $('#upd').hidden = true; placeVideo() };
+// Al volver a la app. Brave en Android a veces regresa sin visibilitychange (página restaurada o solo foco).
 document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate() });
+window.addEventListener('pageshow', () => checkUpdate());
+window.addEventListener('focus', () => checkUpdate());
+window.addEventListener('online', () => checkUpdate());
 setInterval(checkUpdate, 10 * 60 * 1000);
 checkUpdate();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
