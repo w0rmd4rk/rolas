@@ -169,9 +169,13 @@ window.onYouTubeIframeAPIReady = () => {
 // YouTube tenga permiso de sonar en segundo plano). Esa pausa no es del usuario: se mantiene `keep` sonando para
 // que la página siga contando como "reproduciendo" y se reanuda. Solo cuenta si llega en los primeros segundos
 // tras salir; una pausa después (llamada, otra app de música) o con la app visible sí se respeta.
-let autoResume = { n: 0, at: 0 }, hiddenAt = 0, resumeOnReturn = false;
+let autoResume = { n: 0, at: 0 }, hiddenAt = 0, resumeOnReturn = false, loadAt = 0;
+// iOS deja en pausa (o sin empezar) el video recién cargado al cambiar de canción, porque el toque fue en la app
+// y no dentro del marco de YouTube. Esa pausa tampoco es del usuario: se vuelve a dar play.
+const isStopped = st => ![YT.PlayerState.PLAYING, YT.PlayerState.BUFFERING, YT.PlayerState.ENDED].includes(st);
 function onPaused(){
   if (userPaused) return keepAlive(false);
+  if (Date.now() - loadAt < 4000) { if (document.hidden) resumeOnReturn = true; return resumeAfterSystemPause() }
   if (!document.hidden) { userPaused = true; return keepAlive(false) } // p. ej. tocó el video de YouTube
   if (Date.now() - hiddenAt > 5000) { resumeOnReturn = false; return keepAlive(false) }
   resumeOnReturn = true; resumeAfterSystemPause();
@@ -185,9 +189,18 @@ function resumeAfterSystemPause(){
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) { hiddenAt = Date.now(); return }
   // Si no se pudo reanudar en segundo plano, se reanuda al volver a la app.
-  if (resumeOnReturn && ready && !userPaused && player.getPlayerState?.() === YT.PlayerState.PAUSED) resumeAfterSystemPause();
+  if (resumeOnReturn && ready && !userPaused && isStopped(player.getPlayerState?.())) resumeAfterSystemPause();
   resumeOnReturn = false;
 });
+
+// Revisa poco después de cargar que la canción sí esté sonando (si quedó sin empezar no llega ningún evento).
+function ensurePlaying(t){
+  [1500, 4000].forEach(ms => setTimeout(() => {
+    if (userPaused || !ready || current() !== t || !isStopped(player.getPlayerState?.())) return;
+    if (document.hidden) resumeOnReturn = true;
+    keepAlive(true); player.playVideo();
+  }, ms));
+}
 
 function showTrackInfo(t){
   $('#mini').hidden = false;
@@ -201,8 +214,9 @@ function loadTrack(t, autoplay = true){
   showTrackInfo(t);
   if (!ready) { pendingTrack = autoplay ? t : null; if (autoplay) keepAlive(true); return } // dentro del toque (iOS)
   pendingTrack = null;
-  if (autoplay) { userPaused = false; resumeOnReturn = false; keepAlive(true) }
+  if (autoplay) { userPaused = false; resumeOnReturn = false; loadAt = Date.now(); autoResume = { n: 0, at: loadAt }; keepAlive(true) }
   autoplay ? player.loadVideoById(t.id) : player.cueVideoById(t.id);
+  if (autoplay) ensurePlaying(t);
   document.title = `${t.title} · Rolas`;
   if (autoplay) { recents = [t, ...recents.filter(x => x.id !== t.id)].slice(0, 20); save() }
   setMediaSession(t);
