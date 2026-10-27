@@ -156,7 +156,7 @@ window.onYouTubeIframeAPIReady = () => {
       onStateChange: e => {
         setPlayIcon(e.data === YT.PlayerState.PLAYING);
         if (e.data === YT.PlayerState.PLAYING) { keepAlive(true); countPlay() }
-        if (e.data === YT.PlayerState.PAUSED) keepAlive(false);
+        if (e.data === YT.PlayerState.PAUSED) onPaused();
         if ('mediaSession' in navigator) navigator.mediaSession.playbackState = e.data === YT.PlayerState.PLAYING ? 'playing' : 'paused';
         if (e.data === YT.PlayerState.ENDED) next(true);
       },
@@ -164,6 +164,30 @@ window.onYouTubeIframeAPIReady = () => {
     }
   });
 };
+
+// Al salir de la app el sistema puede pausar el video (pasa sobre todo la primera vez, antes de que el marco de
+// YouTube tenga permiso de sonar en segundo plano). Esa pausa no es del usuario: se mantiene `keep` sonando para
+// que la página siga contando como "reproduciendo" y se reanuda. Solo cuenta si llega en los primeros segundos
+// tras salir; una pausa después (llamada, otra app de música) o con la app visible sí se respeta.
+let autoResume = { n: 0, at: 0 }, hiddenAt = 0, resumeOnReturn = false;
+function onPaused(){
+  if (userPaused) return keepAlive(false);
+  if (!document.hidden) { userPaused = true; return keepAlive(false) } // p. ej. tocó el video de YouTube
+  if (Date.now() - hiddenAt > 5000) { resumeOnReturn = false; return keepAlive(false) }
+  resumeOnReturn = true; resumeAfterSystemPause();
+}
+function resumeAfterSystemPause(){
+  if (userPaused || !ready || index < 0) return;
+  if (Date.now() - autoResume.at > 15000) autoResume = { n: 0, at: Date.now() };
+  if (autoResume.n++ >= 3) return; // no insistir sin fin si el sistema no lo deja
+  keepAlive(true); player.playVideo();
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { hiddenAt = Date.now(); return }
+  // Si no se pudo reanudar en segundo plano, se reanuda al volver a la app.
+  if (resumeOnReturn && ready && !userPaused && player.getPlayerState?.() === YT.PlayerState.PAUSED) resumeAfterSystemPause();
+  resumeOnReturn = false;
+});
 
 function showTrackInfo(t){
   $('#mini').hidden = false;
@@ -177,7 +201,7 @@ function loadTrack(t, autoplay = true){
   showTrackInfo(t);
   if (!ready) { pendingTrack = autoplay ? t : null; if (autoplay) keepAlive(true); return } // dentro del toque (iOS)
   pendingTrack = null;
-  if (autoplay) { userPaused = false; keepAlive(true) }
+  if (autoplay) { userPaused = false; resumeOnReturn = false; keepAlive(true) }
   autoplay ? player.loadVideoById(t.id) : player.cueVideoById(t.id);
   document.title = `${t.title} · Rolas`;
   if (autoplay) { recents = [t, ...recents.filter(x => x.id !== t.id)].slice(0, 20); save() }
