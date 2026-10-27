@@ -1719,33 +1719,57 @@ window.addEventListener('pagehide', () => { flushCloud() });
 // Se compara el ETag (o Last-Modified) de app.js e index.html con el que había al abrir la app.
 // Nunca recarga solo: podría cortar la música o una sesión de entrenamiento.
 const UPD_FILES = ['app.js', 'index.html'];
-let updBase = '', updNew = '', updLast = 0;
+let updBase = '', updNew = '', updLast = 0, updDate = null, updChecked = null;
 async function versionSig(){
+  let date = null;
   const parts = await Promise.all(UPD_FILES.map(async f => {
     const r = await fetch(f, { method: 'HEAD', cache: 'no-store' });
     const v = r.ok && (r.headers.get('ETag') || r.headers.get('Last-Modified'));
     if (!v) throw new Error('sin versión');
+    const lm = new Date(r.headers.get('Last-Modified') || '');
+    if (!isNaN(lm) && (!date || lm > date)) date = lm;
     return f + '=' + clip(v, 120);
   }));
-  return parts.join('|');
+  return { sig: parts.join('|'), date };
 }
-async function checkUpdate(){
-  if (document.hidden || !navigator.onLine || Date.now() - updLast < 30000) return;
+// force: revisión pedida desde Ajustes (sin esperar 30 s y aunque se haya cerrado el aviso de esa versión).
+// Regresa 'nueva', 'igual' o 'error'.
+async function checkUpdate(force = false){
+  if (!force && (document.hidden || !navigator.onLine || Date.now() - updLast < 30000)) return;
   updLast = Date.now();
   try {
-    const sig = await versionSig();
-    if (!updBase) { updBase = sig; return } // primera revisión: la versión que está abierta
-    if (sig === updBase || sig === store.get('rolas.updSeen', '')) return;
+    const { sig, date } = await versionSig();
+    updChecked = new Date();
+    if (!updBase) { updBase = sig; updDate = date; return 'igual' } // primera revisión: la versión que está abierta
+    if (sig === updBase || (!force && sig === store.get('rolas.updSeen', ''))) return 'igual';
     updNew = sig; $('#upd').hidden = false; placeVideo();
-  } catch {} // sin red o el servidor no manda ETag: se intenta en la siguiente revisión
+    return 'nueva';
+  } catch { return 'error' } // sin red o el servidor no manda ETag: se intenta en la siguiente revisión
+  finally { paintVersion() }
 }
+const fmtWhen = d => d ? `${d.getDate()} ${MESES[d.getMonth()].slice(0, 3)}, ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}` : '';
+function paintVersion(){
+  $('#verInfo').textContent = (updDate ? `Versión del ${fmtWhen(updDate)}` : 'Versión cargada') +
+    (updChecked ? ` · última revisión ${fmtWhen(updChecked)}` : '');
+}
+$('#btnCheckUpd').onclick = async () => {
+  const b = $('#btnCheckUpd'); b.disabled = true; b.textContent = 'Buscando…';
+  const r = await checkUpdate(true);
+  b.disabled = false; b.textContent = 'Buscar actualización';
+  toast({ nueva: 'Hay una versión nueva', igual: 'Ya tienes la versión más reciente', error: 'No se pudo revisar. Revisa tu conexión.' }[r]);
+  if (r === 'nueva') $('#dlgSettings').close();
+};
 $('#updReload').onclick = async () => {
   $('#updReload').disabled = true; $('#updReload').textContent = 'Recargando…';
   try { await flushCloud() } catch {}
   location.reload();
 };
 $('#updClose').onclick = () => { store.set('rolas.updSeen', updNew); $('#upd').hidden = true; placeVideo() };
+// Al volver a la app. Brave en Android a veces regresa sin visibilitychange (página restaurada o solo foco).
 document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate() });
+window.addEventListener('pageshow', () => checkUpdate());
+window.addEventListener('focus', () => checkUpdate());
+window.addEventListener('online', () => checkUpdate());
 setInterval(checkUpdate, 10 * 60 * 1000);
 checkUpdate();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
