@@ -94,6 +94,11 @@ h2.sec{font-size:1.35rem;font-weight:800;letter-spacing:-.02em;margin:22px 0 10p
 
 /* Mini reproductor */
 footer{flex:none;background:linear-gradient(transparent,var(--bg) 28px);padding:0 8px}
+.upd{display:flex;align-items:center;gap:6px;background:var(--accent);color:var(--accent-ink);border-radius:10px;padding:2px 2px 2px 14px;margin-bottom:6px;font-weight:600;font-size:.92rem}
+.upd[hidden]{display:none}
+.upd-go{color:var(--accent-ink);font-weight:800;text-decoration:underline;padding:10px 4px}
+.upd-go:disabled{opacity:.6}
+.upd .icon-btn{margin-left:auto;color:var(--accent-ink)}
 .mini{position:relative;display:flex;align-items:center;gap:10px;background:var(--mini);border-radius:10px;padding:8px;margin-bottom:6px}
 .mini[hidden]{display:none}
 .mslot{width:44px;height:44px;border-radius:6px;flex:none;background:#000 center/cover no-repeat}
@@ -348,6 +353,11 @@ dialog{max-height:88vh;overflow-y:auto}
 </main>
 
 <footer>
+  <div class="upd" id="upd" role="status" hidden>
+    <span>Hay una actualización ·</span>
+    <button class="upd-go" id="updReload">Recargar</button>
+    <button class="icon-btn" id="updClose" aria-label="Cerrar aviso"><svg viewBox="0 0 24 24"><path d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12z"/></svg></button>
+  </div>
   <div class="mini" id="mini" hidden>
     <div class="mslot" id="mslot"></div>
     <button class="minfo" id="minfo" aria-label="Abrir reproductor">

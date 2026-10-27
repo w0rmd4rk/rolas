@@ -1665,4 +1665,38 @@ sb.auth.onAuthStateChange((event, session) => {
   if (data.session?.user) { if (!booted) enterApp(data.session.user) } else leaveApp();
 })();
 window.addEventListener('pagehide', () => { flushCloud() });
+
+// ---------- Aviso de versión nueva ----------
+// Se compara el ETag (o Last-Modified) de app.js e index.html con el que había al abrir la app.
+// Nunca recarga solo: podría cortar la música o una sesión de entrenamiento.
+const UPD_FILES = ['app.js', 'index.html'];
+let updBase = '', updNew = '', updLast = 0;
+async function versionSig(){
+  const parts = await Promise.all(UPD_FILES.map(async f => {
+    const r = await fetch(f, { method: 'HEAD', cache: 'no-store' });
+    const v = r.ok && (r.headers.get('ETag') || r.headers.get('Last-Modified'));
+    if (!v) throw new Error('sin versión');
+    return f + '=' + clip(v, 120);
+  }));
+  return parts.join('|');
+}
+async function checkUpdate(){
+  if (document.hidden || !navigator.onLine || Date.now() - updLast < 30000) return;
+  updLast = Date.now();
+  try {
+    const sig = await versionSig();
+    if (!updBase) { updBase = sig; return } // primera revisión: la versión que está abierta
+    if (sig === updBase || sig === store.get('rolas.updSeen', '')) return;
+    updNew = sig; $('#upd').hidden = false; placeVideo();
+  } catch {} // sin red o el servidor no manda ETag: se intenta en la siguiente revisión
+}
+$('#updReload').onclick = async () => {
+  $('#updReload').disabled = true; $('#updReload').textContent = 'Recargando…';
+  try { await flushCloud() } catch {}
+  location.reload();
+};
+$('#updClose').onclick = () => { store.set('rolas.updSeen', updNew); $('#upd').hidden = true; placeVideo() };
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkUpdate() });
+setInterval(checkUpdate, 10 * 60 * 1000);
+checkUpdate();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
