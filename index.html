@@ -74,7 +74,9 @@ h2.sec{font-size:1.35rem;font-weight:800;letter-spacing:-.02em;margin:22px 0 10p
 .pl-head{display:flex;align-items:center;gap:10px;margin:20px 0 6px}
 .pl-head h2{font-size:1.15rem;margin:0;flex:1;min-width:0}
 .empty{color:var(--muted);padding:20px 0}
-#plBar[hidden]{display:none}
+#plBar[hidden],#qBar[hidden],#sTabs[hidden]{display:none}
+.pl-save{padding:8px 14px;font-size:.85rem}
+.pl-save:disabled{opacity:.5}
 .pl-row{display:flex;align-items:center;gap:12px;width:100%;padding:6px 0;text-align:left;min-width:0}
 .pl-row:active{opacity:.7}
 .pl-row .cover{border-radius:6px}
@@ -300,11 +302,22 @@ dialog{max-height:88vh;overflow-y:auto}
   <section class="view active" id="view-inicio"><div id="home"></div></section>
 
   <section class="view" id="view-buscar">
-    <div class="bar">
+    <div class="bar" id="qBar">
       <input id="q" type="search" placeholder="¿Qué quieres escuchar?" autocomplete="off" enterkeyhint="search">
     </div>
-    <p class="hint" id="searchHint"></p>
-    <ul class="list" id="results"></ul>
+    <div class="chips" id="sTabs" role="tablist">
+      <button class="chip on" data-st="songs" role="tab" aria-selected="true">Canciones</button>
+      <button class="chip" data-st="lists" role="tab" aria-selected="false">Playlists</button>
+    </div>
+    <div id="songsPane">
+      <p class="hint" id="searchHint"></p>
+      <ul class="list" id="results"></ul>
+    </div>
+    <div id="listsPane" hidden>
+      <p class="hint" id="plHint">Escribe arriba qué playlist buscas.</p>
+      <ul class="list" id="plResults"></ul>
+    </div>
+    <div id="ytPlView" hidden></div>
   </section>
 
   <section class="view" id="view-biblioteca">
