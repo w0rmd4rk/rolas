@@ -125,8 +125,25 @@ function silentWav(){
   new Uint8Array(buf, 44).fill(128); // 128 = silencio en audio de 8 bits
   return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
 }
+// iOS (Safari y Brave usan WebKit) es más estricto que Android:
+// - Solo deja que un audio empiece con play() dentro de un toque del usuario. Una vez que ese mismo elemento
+//   sonó dentro de un toque queda "desbloqueado" y después ya se le puede dar play() sin gesto (al cambiar de
+//   canción sola, o tras un await como en el Mix del gym). Por eso se desbloquea en el primer toque.
+// - Ignora para la pantalla de bloqueo los audios con muted o volume = 0: `keep` no debe tener ninguno de los dos.
+//   No se oye porque el archivo mismo es silencio.
+// - Si el marco de YouTube empieza a sonar, iOS puede tomar sus controles; al sonar `keep` se vuelven a poner
+//   los de Rolas (setMediaSession).
+// - Si hay manejadores de seekbackward/seekforward, iOS muestra ±10 s en lugar de anterior/siguiente.
 const keep = new Audio(silentWav()); keep.loop = true;
-function keepAlive(on){ if (on) keep.play().catch(() => {}); else keep.pause() }
+const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+let keepWanted = false, keepUnlocked = false;
+function keepAlive(on){ keepWanted = on; if (on) keep.play().then(() => keepUnlocked = true, () => {}); else keep.pause() }
+function unlockKeep(){
+  if (keepUnlocked) return;
+  keep.play().then(() => { keepUnlocked = true; if (!keepWanted) keep.pause() }, () => {});
+}
+// Solo en iOS: en Android no hace falta y así no aparece una notificación de más en el primer toque.
+if (IS_IOS) ['touchend', 'click'].forEach(ev => document.addEventListener(ev, unlockKeep, { capture: true, passive: true }));
 
 // ---------- YouTube ----------
 const s = document.createElement('script'); s.src = 'https://www.youtube.com/iframe_api'; document.head.appendChild(s);
@@ -158,16 +175,13 @@ function showTrackInfo(t){
 }
 function loadTrack(t, autoplay = true){
   showTrackInfo(t);
-  if (!ready) { pendingTrack = autoplay ? t : null; return }
+  if (!ready) { pendingTrack = autoplay ? t : null; if (autoplay) keepAlive(true); return } // dentro del toque (iOS)
   pendingTrack = null;
   if (autoplay) { userPaused = false; keepAlive(true) }
   autoplay ? player.loadVideoById(t.id) : player.cueVideoById(t.id);
   document.title = `${t.title} · Rolas`;
   if (autoplay) { recents = [t, ...recents.filter(x => x.id !== t.id)].slice(0, 20); save() }
-  if ('mediaSession' in navigator) {
-    navigator.mediaSession.metadata = new MediaMetadata({ title: t.title, artist: t.channel || '',
-      artwork: [{ src: bigImg(t.id), sizes: dataSaver ? '320x180' : '480x360', type:'image/jpeg' }] });
-  }
+  setMediaSession(t);
   renderQueue(); markPlaying();
   if (autoplay && index >= queue.length - 2) extendQueue();
 }
@@ -249,13 +263,24 @@ function paintModes(){
 }
 paintModes();
 
-if ('mediaSession' in navigator) {
-  navigator.mediaSession.setActionHandler('play', () => { userPaused = false; keepAlive(true); player?.playVideo() });
-  navigator.mediaSession.setActionHandler('pause', () => { userPaused = true; player?.pauseVideo(); keepAlive(false); navigator.mediaSession.playbackState = 'paused' });
-  try { navigator.mediaSession.setActionHandler('seekto', e => player?.seekTo(e.seekTime, true)) } catch {}
-  navigator.mediaSession.setActionHandler('nexttrack', () => next());
-  navigator.mediaSession.setActionHandler('previoustrack', prev);
+// Controles de la notificación (Android) y de la pantalla de bloqueo (iOS).
+function setMediaSession(t = current()){
+  if (!('mediaSession' in navigator)) return;
+  const ms = navigator.mediaSession;
+  if (t) ms.metadata = new MediaMetadata({ title: t.title, artist: t.channel || '',
+    artwork: [{ src: bigImg(t.id), sizes: dataSaver ? '320x180' : '480x360', type:'image/jpeg' }] });
+  const on = (action, fn) => { try { ms.setActionHandler(action, fn) } catch {} };
+  on('play', () => { userPaused = false; keepAlive(true); player?.playVideo() });
+  on('pause', () => { userPaused = true; player?.pauseVideo(); keepAlive(false); ms.playbackState = 'paused' });
+  on('nexttrack', () => next());
+  on('previoustrack', prev);
+  on('seekto', e => player?.seekTo(e.seekTime, true));
+  on('seekbackward', null); // en iOS, si existen, reemplazan a anterior/siguiente
+  on('seekforward', null);
 }
+setMediaSession(null); // los datos de la canción se ponen al cargarla
+// Cuando `keep` empieza a sonar (en iOS después del toque) se vuelven a poner los controles de Rolas.
+keep.addEventListener('playing', () => setMediaSession());
 
 let seeking = false;
 $('#seek').addEventListener('input', () => seeking = true);
