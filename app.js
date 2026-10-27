@@ -52,6 +52,7 @@ const current = () => queue[index];
 
 // ---------- Navegación ----------
 let currentView = 'inicio';
+let openPl = null; // id de la playlist abierta en Tu biblioteca (null = vista de lista)
 function showView(name){
   currentView = name;
   document.querySelectorAll('.tabbar button').forEach(x => x.setAttribute('aria-selected', x.dataset.view === name));
@@ -65,7 +66,10 @@ function showView(name){
   $('main').scrollTop = 0;
 }
 function greeting(){ const h = new Date().getHours(); return h < 12 ? 'Buenos días' : h < 19 ? 'Buenas tardes' : 'Buenas noches' }
-document.querySelectorAll('.tabbar button').forEach(b => b.onclick = () => showView(b.dataset.view));
+document.querySelectorAll('.tabbar button').forEach(b => b.onclick = () => {
+  // Tocar otra vez "Tu biblioteca" desde el detalle regresa a la lista, como en Spotify.
+  if (b.dataset.view === 'biblioteca' && currentView === 'biblioteca' && openPl) closePlaylist(); else showView(b.dataset.view);
+});
 
 // ---------- Pantalla grande ----------
 let sheetOpen = false;
@@ -77,7 +81,11 @@ $('#minfo').onclick = openSheet; $('#mslot').onclick = openSheet;
 const leaveSheet = () => history.state?.sheet ? history.back() : closeSheet();
 $('#btnClose').onclick = leaveSheet;
 $('#btnToQueue').onclick = () => { leaveSheet(); showView('cola') };
-window.addEventListener('popstate', () => sheetOpen && closeSheet());
+// Botón Atrás de Android: cierra la pantalla grande y luego el detalle de la playlist.
+window.addEventListener('popstate', () => {
+  if (sheetOpen && !history.state?.sheet) closeSheet();
+  if (openPl && !history.state?.pl && !history.state?.sheet) { openPl = null; renderLibrary(); $('main').scrollTop = 0 }
+});
 
 // Un solo iframe que nunca se mueve en el DOM (moverlo lo recargaría): solo se reacomoda encima del lugar visible.
 function placeVideo(){
@@ -360,17 +368,17 @@ function coverFor(tracks){
 }
 function renderHome(){
   const box = $('#home'); box.innerHTML = '';
-  if (!recents.length && !library.some(p => p.tracks.length)) {
+  if (!recents.length && library.length === 1 && !library[0].tracks.length) {
     box.innerHTML = `<div class="welcome"><h2 class="sec" style="margin-top:0">Empieza a escuchar</h2>
       <p>Busca una canción, tócala para reproducirla y guárdala en tus playlists con el botón +.</p>
       <button class="btn" id="goSearch">Buscar música</button></div>`;
     $('#goSearch').onclick = () => showView('buscar'); return;
   }
   const grid = document.createElement('div'); grid.className = 'grid';
-  library.filter(p => p.tracks.length).slice(0, 8).forEach(pl => {
+  library.slice(0, 8).forEach(pl => {
     const b = document.createElement('button'); b.className = 'tile';
     b.innerHTML = `${coverFor(pl.tracks)}<b>${esc(pl.name)}</b>`;
-    b.onclick = () => playList(pl.tracks, 0);
+    b.onclick = () => pl.tracks.length ? playList(pl.tracks, 0) : openPlaylist(pl.id);
     grid.appendChild(b);
   });
   if (grid.children.length) box.appendChild(grid);
@@ -393,26 +401,66 @@ function renderResults(items){
     onPlay: () => playList(lastResults, i, 'search:' + lastQuery) })));
   markPlaying();
 }
+const ICON_BACK = '<svg viewBox="0 0 24 24"><path d="M20 11H7.8l5.6-5.6L12 4l-8 8 8 8 1.4-1.4L7.8 13H20z"/></svg>';
+const ICON_SHUF = '<svg viewBox="0 0 24 24"><path d="M14 4h6v6l-2.3-2.3-4.3 4.3-1.4-1.4 4.3-4.3zM4 5.4 5.4 4 20 18.6 18.6 20zM14 20v-2h2.6l-3.2-3.2 1.4-1.4 3.2 3.2V14h2v6z"/></svg>';
+const nSongs = n => `${n} ${n === 1 ? 'canción' : 'canciones'}`;
 function renderLibrary(){
   const box = $('#library'); box.innerHTML = '';
-  library.forEach(pl => {
-    const head = document.createElement('div'); head.className = 'pl-head';
-    head.innerHTML = `${coverFor(pl.tracks).replace('class="cover', 'style="border-radius:6px" class="cover')}
-      <h2>${esc(pl.name)}<div class="t-sub">Playlist · ${pl.tracks.length} canciones</div></h2>
-      <button class="icon-btn" data-a="play" aria-label="Reproducir playlist" style="color:var(--accent)" ${pl.tracks.length ? '' : 'disabled'}><svg viewBox="0 0 24 24" style="width:34px;height:34px"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm-2 14.5v-9l6 4.5z"/></svg></button>
-      ${pl.id !== 'fav' ? `<button class="icon-btn" data-a="del" aria-label="Borrar playlist">${ICON_DEL}</button>` : ''}`;
-    head.querySelector('[data-a=play]').onclick = () => playList(pl.tracks, 0);
-    head.querySelector('[data-a=del]')?.addEventListener('click', () => {
-      if (confirm(`¿Borrar la playlist “${pl.name}”?`)) { library = library.filter(p => p !== pl); save(); renderLibrary() }
-    });
-    box.appendChild(head);
-    const ul = document.createElement('ul'); ul.className = 'list';
-    if (!pl.tracks.length) ul.innerHTML = '<li class="empty">Vacía. Agrega canciones desde Buscar con el botón +.</li>';
-    pl.tracks.forEach((t, i) => ul.appendChild(trackRow(t, { queue:true, del:true, onPlay: () => playList(pl.tracks, i),
-      onDel: () => { pl.tracks.splice(i,1); save(); renderLibrary() } })));
-    box.appendChild(ul);
+  const pl = openPl && library.find(p => p.id === openPl);
+  if (openPl && !pl) openPl = null; // la playlist ya no existe (se borró o cambió en la nube)
+  $('#plBar').hidden = !!pl;
+  if (pl) return renderPlaylist(box, pl);
+  const ul = document.createElement('ul'); ul.className = 'list';
+  library.forEach(p => {
+    const li = document.createElement('li');
+    li.innerHTML = `<button class="pl-row">${coverFor(p.tracks)}<span><b class="t-title">${esc(p.name)}</b><span class="t-sub">Playlist · ${nSongs(p.tracks.length)}</span></span></button>`;
+    li.firstChild.onclick = () => openPlaylist(p.id);
+    ul.appendChild(li);
   });
+  box.appendChild(ul);
+}
+function renderPlaylist(box, pl){
+  const head = document.createElement('div'); head.className = 'pl-detail';
+  head.innerHTML = `<button class="icon-btn pl-back" data-a="back" aria-label="Regresar a Tu biblioteca">${ICON_BACK}</button>
+    ${coverFor(pl.tracks)}
+    <h2>${esc(pl.name)}</h2><div class="t-sub">Playlist · ${nSongs(pl.tracks.length)}</div>
+    <div class="pl-actions">
+      <button class="icon-btn" data-a="shuf" aria-label="Reproducir en aleatorio" ${pl.tracks.length ? '' : 'disabled'}>${ICON_SHUF}</button>
+      <button class="icon-btn" data-a="more" aria-label="Más opciones">${DOTS}</button>
+      <button class="pl-play" data-a="play" aria-label="Reproducir playlist" ${pl.tracks.length ? '' : 'disabled'}><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></button>
+    </div>`;
+  head.querySelector('[data-a=back]').onclick = closePlaylist;
+  head.querySelector('[data-a=play]').onclick = () => playList(pl.tracks, 0);
+  head.querySelector('[data-a=shuf]').onclick = () => {
+    if (!shuffle) { shuffle = true; save(); paintModes(); toast('Aleatorio activado') }
+    playList(pl.tracks, Math.floor(Math.random() * pl.tracks.length));
+  };
+  head.querySelector('[data-a=more]').onclick = () => menu(pl.name, [
+    ['Renombrar', () => formDialog('Renombrar playlist', [{ key: 'name', label: 'Nombre', value: pl.name, max: 80 }], v => {
+      if (!v.name) { toast('Escribe un nombre'); return false }
+      pl.name = clip(v.name, 80); save(); renderLibrary();
+    })],
+    ...(pl.id !== 'fav' ? [['Eliminar playlist', () => {
+      if (confirm(`¿Eliminar la playlist “${pl.name}”?`)) { library = library.filter(p => p !== pl); save(); closePlaylist(); toast('Playlist eliminada') }
+    }, true]] : [])
+  ]);
+  box.appendChild(head);
+  const ul = document.createElement('ul'); ul.className = 'list';
+  if (!pl.tracks.length) ul.innerHTML = '<li class="empty">Vacía. Agrega canciones desde Buscar con el botón +.</li>';
+  pl.tracks.forEach((t, i) => ul.appendChild(trackRow(t, { queue:true, del:true, onPlay: () => playList(pl.tracks, i),
+    onDel: () => { pl.tracks.splice(i,1); save(); renderLibrary() } })));
+  box.appendChild(ul);
   markPlaying();
+}
+function openPlaylist(id){
+  // Una entrada en el historial para que Atrás regrese a la lista.
+  if (history.state?.pl) history.replaceState({ pl: id }, ''); else history.pushState({ pl: id }, '');
+  openPl = id;
+  if (currentView === 'biblioteca') { renderLibrary(); $('main').scrollTop = 0 } else showView('biblioteca');
+}
+function closePlaylist(){
+  if (history.state?.pl) return history.back(); // el popstate regresa a la lista
+  openPl = null; renderLibrary(); $('main').scrollTop = 0;
 }
 function renderQueue(){
   const ul = $('#queue'); ul.innerHTML = '';
@@ -442,7 +490,7 @@ function askPlaylist(t){
 }
 $('#btnNewPl').onclick = () => {
   const name = $('#newPl').value.trim(); if (!name) return;
-  library.push({ id: 'pl' + Date.now(), name, tracks: [] }); $('#newPl').value = ''; save(); renderLibrary();
+  library.unshift({ id: 'pl' + Date.now(), name: clip(name, 80), tracks: [] }); $('#newPl').value = ''; save(); renderLibrary();
 };
 $('#btnClearQ').onclick = () => { queue = current() ? [current()] : []; index = queue.length ? 0 : -1; save(); renderQueue() };
 

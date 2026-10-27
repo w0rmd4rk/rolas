@@ -74,6 +74,21 @@ h2.sec{font-size:1.35rem;font-weight:800;letter-spacing:-.02em;margin:22px 0 10p
 .pl-head{display:flex;align-items:center;gap:10px;margin:20px 0 6px}
 .pl-head h2{font-size:1.15rem;margin:0;flex:1;min-width:0}
 .empty{color:var(--muted);padding:20px 0}
+#plBar[hidden]{display:none}
+.pl-row{display:flex;align-items:center;gap:12px;width:100%;padding:6px 0;text-align:left;min-width:0}
+.pl-row:active{opacity:.7}
+.pl-row .cover{border-radius:6px}
+.pl-row>span{display:flex;flex-direction:column;gap:2px;min-width:0}
+.pl-row .t-title{font-weight:600}
+.pl-detail{position:relative;display:flex;flex-direction:column;align-items:center;text-align:center;padding-top:8px;margin-bottom:8px}
+.pl-detail .pl-back{position:absolute;left:-8px;top:0;color:var(--text)}
+.pl-detail .cover{width:min(60vw,240px);height:min(60vw,240px);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.45)}
+.pl-detail h2{font-size:1.5rem;font-weight:800;letter-spacing:-.02em;margin:16px 0 4px;overflow-wrap:anywhere}
+.pl-actions{display:flex;align-items:center;gap:4px;width:100%;margin-top:10px}
+.pl-actions .icon-btn svg{width:26px;height:26px}
+.pl-actions .icon-btn:disabled,.pl-play:disabled{opacity:.4}
+.pl-play{margin-left:auto;width:56px;height:56px;border-radius:50%;background:var(--accent);color:var(--accent-ink);display:grid;place-items:center}
+.pl-play svg{width:28px;height:28px;fill:currentColor}
 
 /* Mini reproductor */
 footer{flex:none;background:linear-gradient(transparent,var(--bg) 28px);padding:0 8px}
@@ -293,8 +308,8 @@ dialog{max-height:88vh;overflow-y:auto}
   </section>
 
   <section class="view" id="view-biblioteca">
-    <div class="bar">
-      <input id="newPl" class="dark" placeholder="Nombre de la nueva playlist">
+    <div class="bar" id="plBar">
+      <input id="newPl" class="dark" placeholder="Nombre de la nueva playlist" maxlength="80">
       <button class="btn" id="btnNewPl">Crear</button>
     </div>
     <div id="library"></div>
