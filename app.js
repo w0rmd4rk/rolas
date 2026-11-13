@@ -1344,6 +1344,14 @@ function setDone(e){
   list.push({ at: Date.now(), rest: null, target: null });
   session.rest = { exId: e.id, start: Date.now(), target: e.rest || DEFAULT_REST, alerted: false };
   if (list.length >= setCount(e)) { const log = todayLog(); if (!log.ex.includes(e.id)) { log.ex.push(e.id); saveFit() } }
+  // Cuando ya están todas las series de todos los ejercicios del día (en cualquier orden), se pregunta si terminar.
+  // El tiempo se cuenta hasta esta serie aunque se tarde en responder.
+  const d = fitness.routines.find(x => x.id === session.rid)?.days.find(x => x.id === session.did);
+  if (d?.exercises.length && d.exercises.every(x => setsOf(x.id).length >= setCount(x))) {
+    const at = Date.now(); saveSession(); renderRutina();
+    if (confirm('¡Completaste todas las series! ¿Terminar el entrenamiento?')) { toast('¡Rutina completa!'); endSession(at) }
+    return;
+  }
   saveSession(); renderRutina();
 }
 function finishRest(){
@@ -1352,14 +1360,14 @@ function finishRest(){
   if (last) { last.rest = Math.round((Date.now() - rs.start) / 1000); last.target = rs.target }
   session.rest = null; saveSession();
 }
-function endSession(){
+function endSession(at = Date.now()){
   if (!session) return;
   session.rest = null; // el descanso que estaba corriendo al terminar no cuenta
   const r = fitness.routines.find(x => x.id === session.rid), d = r?.days.find(x => x.id === session.did);
   const all = Object.values(session.sets).flat(), rests = all.filter(x => x.rest !== null);
   const total = d ? d.exercises.reduce((t, e) => t + setCount(e), 0) : all.length;
   const avg = a => a.length ? Math.round(a.reduce((t, x) => t + x, 0) / a.length) : null;
-  const sum = { id: uid(), date: todayKey(), rname: r?.name || '', dname: d ? (d.focus || d.name) : '', dur: Math.round((Date.now() - session.start) / 1000),
+  const sum = { id: uid(), date: todayKey(), rname: r?.name || '', dname: d ? (d.focus || d.name) : '', dur: Math.round((at - session.start) / 1000),
     sets: all.length, total, avgRest: avg(rests.map(x => x.rest)), avgTarget: avg(rests.map(x => x.target)),
     short: rests.filter(x => x.rest < x.target - 15).length, long: rests.filter(x => x.rest > x.target + 30).length };
   fitness.sessions = [...fitness.sessions, sum].slice(-300);
