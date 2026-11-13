@@ -1344,6 +1344,9 @@ function setDone(e){
   list.push({ at: Date.now(), rest: null, target: null });
   session.rest = { exId: e.id, start: Date.now(), target: e.rest || DEFAULT_REST, alerted: false };
   if (list.length >= setCount(e)) { const log = todayLog(); if (!log.ex.includes(e.id)) { log.ex.push(e.id); saveFit() } }
+  // Con la última serie de todos los ejercicios del día, el entrenamiento termina solo (el tiempo se detiene aquí).
+  const d = fitness.routines.find(x => x.id === session.rid)?.days.find(x => x.id === session.did);
+  if (d?.exercises.length && d.exercises.every(x => setsOf(x.id).length >= setCount(x))) { toast('¡Rutina completa!'); return endSession() }
   saveSession(); renderRutina();
 }
 function finishRest(){
